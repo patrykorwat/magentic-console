@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magentic Agent Orchestrator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-top: 15px;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            background: white;
+            padding: 15px 30px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+
+        .tab:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(0,0,0,0.15);
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .card {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+            font-family: inherit;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+        }
+
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .agent-card {
+            border: 2px solid #e0e0e0;
+            padding: 20px;
+            border-radius: 10px;
+            transition: all 0.3s;
+        }
+
+        .agent-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+        }
+
+        .agent-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .agent-card .capabilities {
+            margin-top: 15px;
+        }
+
+        .capability-tag {
+            display: inline-block;
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin: 4px;
+        }
+
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 500px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 15px;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+
+        .message.user {
+            background: #667eea;
+            color: white;
+            margin-left: auto;
+        }
+
+        .message.assistant {
+            background: white;
+            border: 2px solid #e0e0e0;
+        }
+
+        .message .role {
+            font-weight: 600;
+            margin-bottom: 5px;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .chat-input {
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input textarea {
+            flex: 1;
+        }
+
+        .plan-view {
+            margin-top: 20px;
+        }
+
+        .step {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .step.executing {
+            border-left-color: #ffc107;
+            background: #fff8e1;
+        }
+
+        .step.completed {
+            border-left-color: #28a745;
+            background: #d4edda;
+        }
+
+        .step-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .step-number {
+            font-weight: 700;
+            color: #667eea;
+            font-size: 18px;
+        }
+
+        .agent-badge {
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .step-result {
+            margin-top: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            white-space: pre-wrap;
+        }
+
+        .mcp-server {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 2px solid #e0e0e0;
+        }
+
+        .mcp-server h4 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .tool-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .tool-tag {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 6px 14px;
+            border-radius: 15px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px;
+        }
+
+        .log-entry.info { color: #4fc3f7; }
+        .log-entry.success { color: #81c784; }
+        .log-entry.error { color: #e57373; }
+        .log-entry.warning { color: #ffb74d; }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Magentic Agent Orchestrator</h1>
+            <p>Configure agents, manage MCP servers, and execute tasks with real-time monitoring</p>
+            <span class="status" id="status">Connecting...</span>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('execute')">🚀 Execute Task</div>
+            <div class="tab" onclick="switchTab('agents')">🤖 Agents</div>
+            <div class="tab" onclick="switchTab('config')">⚙️ Configuration</div>
+            <div class="tab" onclick="switchTab('logs')">📊 Activity Log</div>
+        </div>
+
+        <!-- Execute Task Tab -->
+        <div id="execute-tab" class="tab-content active">
+            <div class="card">
+                <h2>Execute Task with Planning</h2>
+                <div class="form-group">
+                    <label>Task Description</label>
+                    <textarea id="task-input" placeholder="Describe your task... The manager will create a plan and execute it."></textarea>
+                </div>
+                <div id="uploaded-files-display-task" style="padding: 10px; background: #f0f0f0; border-radius: 5px; margin-bottom: 10px; display: none;">
+                    <strong>Załączone pliki:</strong>
+                    <div id="files-list-task"></div>
+                </div>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn" onclick="executeTask()">Create Plan & Execute</button>
+                    <button class="btn btn-secondary" onclick="createPlanOnly()">Create Plan Only</button>
+                    <label class="btn btn-secondary" style="cursor: pointer; margin: 0;">
+                        📎 Pliki
+                        <input type="file" id="file-input-task" multiple style="display: none;" onchange="handleFileUpload(event)">
+                    </label>
+                    <button class="btn btn-danger" id="abort-btn" onclick="abortExecution()" style="display: none;">⏹ Stop Execution</button>
+                </div>
+            </div>
+
+            <div class="card" id="plan-view-card" style="display: none;">
+                <h2>Execution Plan & Results</h2>
+                <div id="plan-view" class="plan-view"></div>
+            </div>
+        </div>
+
+        <!-- Agents Tab -->
+        <div id="agents-tab" class="tab-content">
+            <div class="card">
+                <h2>Available Agents</h2>
+                <div id="agents-grid" class="agent-grid"></div>
+            </div>
+        </div>
+
+        <!-- Configuration Tab -->
+        <div id="config-tab" class="tab-content">
+            <div class="card" style="margin-bottom: 20px;">
+                <h2>⚙️ Configuration</h2>
+                <p style="margin-bottom: 20px; padding: 15px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 5px;">
+                    <strong>Note:</strong> API keys and MCP servers are configured in the <code>.env</code> file for security.<br>
+                    Edit <code>.env</code> in the project root and restart the server to apply changes.
+                </p>
+
+                <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 20px;">
+                    <h3 style="margin-bottom: 10px; font-size: 16px;">Example .env file:</h3>
+                    <pre style="background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 5px; overflow-x: auto; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px;">ANTHROPIC_API_KEY=sk-ant-your-key-here
+GOOGLE_API_KEY=your-google-key-here
+
+# Optional: MCP Servers (JSON array)
+MCP_SERVERS='[{"name":"filesystem","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}]'</pre>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card">
+                    <h2>Claude Model Configuration</h2>
+                    <div class="form-group">
+                        <label>Model <small style="color: #666;">(Auto-loaded from Anthropic API)</small></label>
+                        <select id="claude-model">
+                            <option>Loading latest models...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Temperature (0-1)</label>
+                        <input type="number" id="claude-temp" min="0" max="1" step="0.1" value="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Tokens</label>
+                        <input type="number" id="claude-tokens" value="4096">
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Gemini Model Configuration</h2>
+                    <div class="form-group">
+                        <label>Model <small style="color: #666;">(Auto-loaded from Google API)</small></label>
+                        <select id="gemini-model">
+                            <option>Loading latest models...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Temperature (0-1)</label>
+                        <input type="number" id="gemini-temp" min="0" max="1" step="0.1" value="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Tokens</label>
+                        <input type="number" id="gemini-tokens" value="4096">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <button class="btn" onclick="saveConfig()" style="width: 100%; font-size: 18px; padding: 16px;">💾 Save Model Configuration</button>
+                <p style="margin-top: 10px; color: #666; text-align: center; font-size: 14px;">Saves both Claude and Gemini settings to magentic-config.json</p>
+            </div>
+        </div>
+
+        <!-- Logs Tab -->
+        <div id="logs-tab" class="tab-content">
+            <div class="card">
+                <h2>Real-Time Activity Log</h2>
+                <div class="log" id="activity-log"></div>
+                <button class="btn btn-secondary" onclick="clearLogs()" style="margin-top: 10px;">Clear Logs</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

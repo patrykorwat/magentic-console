@@ -1,0 +1,48 @@
+{
+  "name": "magentic-agent",
+  "version": "1.0.0",
+  "description": "Magentic orchestration pattern with Claude and Gemini agents",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "cli": "tsx src/cli.ts",
+    "ui": "tsx src/ui/server.ts",
+    "test": "vitest"
+  },
+  "bin": {
+    "magentic": "./dist/cli.js"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "magentic",
+    "claude",
+    "gemini",
+    "orchestration"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@google/generative-ai": "^0.21.0",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "multer": "^2.0.2",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1",
+    "zod-to-json-schema": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

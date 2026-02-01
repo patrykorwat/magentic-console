@@ -1,0 +1,435 @@
+import { ClaudeAgent } from './agents/claude-agent.js';
+import { GeminiAgent } from './agents/gemini-agent.js';
+import { ManagerAgent } from './agents/manager-agent.js';
+import {
+  Message,
+  ToolCall,
+  ToolResult,
+  Plan,
+  MCPServerConfig,
+  AgentConfig,
+  FileAttachment,
+} from './types/index.js';
+import { getCrossAgentTools, getGeminiTools } from './tools/index.js';
+
+export interface OrchestratorConfig {
+  anthropicApiKey: string;
+  googleApiKey: string;
+  mcpServers?: MCPServerConfig[];
+  claudeConfig?: Partial<AgentConfig>;
+  geminiConfig?: Partial<AgentConfig>;
+}
+
+/**
+ * Magentic Orchestrator
+ * Coordinates between Manager, Claude, and Gemini agents
+ */
+export class MagenticOrchestrator {
+  private manager: ManagerAgent;
+  private claude: ClaudeAgent;
+  private gemini: GeminiAgent;
+  private conversationHistory: Message[] = [];
+  public aborted: boolean = false;
+
+  constructor(private config: OrchestratorConfig) {
+    // Initialize Manager Agent with default Claude model from config
+    const defaultClaudeModel = config.claudeConfig?.model || 'claude-sonnet-4-5-20250929';
+    this.manager = new ManagerAgent(config.anthropicApiKey, defaultClaudeModel);
+
+    // Initialize Claude Agent with cross-agent tools and MCP support
+    this.claude = new ClaudeAgent(
+      config.anthropicApiKey,
+      {
+        name: 'Claude',
+        tools: getCrossAgentTools(),
+        ...config.claudeConfig,
+      },
+      config.mcpServers || []
+    );
+
+    // Initialize Gemini Agent with its specific tools
+    this.gemini = new GeminiAgent(config.googleApiKey, {
+      name: 'Gemini',
+      tools: getGeminiTools(),
+      ...config.geminiConfig,
+    });
+  }
+
+  /**
+   * Initialize the orchestrator (e.g., connect to MCP servers)
+   */
+  async initialize(): Promise<void> {
+    console.log('[Orchestrator] Initializing...');
+    await this.claude.initializeMCP();
+    console.log('[Orchestrator] Initialized successfully');
+  }
+
+  /**
+   * Set the Claude model for the next execution
+   */
+  setClaudeModel(model: string): void {
+    this.claude.setModel(model);
+  }
+
+  /**
+   * Cleanup resources
+   */
+  async cleanup(): Promise<void> {
+    console.log('[Orchestrator] Cleaning up...');
+    await this.claude.closeMCP();
+    console.log('[Orchestrator] Cleanup complete');
+  }
+
+  /**
+   * Execute a task with automatic planning and delegation
+   */
+  async executeTask(task: string, autoMode: boolean = false): Promise<string> {
+    console.log(`\n[Orchestrator] Received task: ${task}`);
+
+    // Step 1: Create a plan
+    console.log('[Orchestrator] Creating execution plan...');
+    const plan = await this.manager.createPlan(task);
+    console.log('[Orchestrator] Plan created:');
+    console.log(JSON.stringify(plan, null, 2));
+
+    if (!autoMode) {
+      // In manual mode, return the plan for user approval
+      return this.formatPlan(plan);
+    }
+
+    // Step 2: Execute the plan
+    return await this.executePlan(plan);
+  }
+
+  /**
+   * Execute a pre-approved plan
+   */
+  async executePlan(plan: Plan): Promise<string> {
+    console.log('\n[Orchestrator] Executing plan...');
+    const results: string[] = [];
+
+    for (const step of plan.steps) {
+      console.log(`\n[Orchestrator] Step ${step.step}: ${step.description}`);
+      console.log(`[Orchestrator] Agent: ${step.agent}`);
+
+      let result: string;
+
+      switch (step.agent) {
+        case 'claude':
+          result = await this.executeWithClaude(step.description);
+          break;
+        case 'gemini':
+          result = await this.executeWithGemini(step.description);
+          break;
+        case 'manager':
+          result = await this.executeWithManager(step.description);
+          break;
+        default:
+          result = `Unknown agent: ${step.agent}`;
+      }
+
+      results.push(`Step ${step.step} (${step.agent}): ${result}`);
+      console.log(`[Orchestrator] Step ${step.step} completed`);
+    }
+
+    const finalResult = results.join('\n\n');
+    console.log('\n[Orchestrator] Plan execution completed');
+    return finalResult;
+  }
+
+  /**
+   * Execute Claude request with automatic rate limit retry
+   */
+  private async executeClaudeWithRetry(
+    messages: Message[],
+    toolResults: ToolResult[] = [],
+    maxRetries: number = 3
+  ): Promise<AgentResponse> {
+    let lastError: any = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        if (toolResults.length > 0) {
+          return await this.claude.executeWithTools(messages, toolResults);
+        } else {
+          return await this.claude.execute(messages);
+        }
+      } catch (error: any) {
+        lastError = error;
+
+        // Check if it's a rate limit error
+        if (error.isRateLimit && error.retryAfter) {
+          const retryAfter = error.retryAfter;
+          console.log(`[Orchestrator] Rate limit hit. Waiting ${retryAfter} seconds before retry (attempt ${attempt}/${maxRetries})...`);
+
+          // Broadcast rate limit info to UI
+          if (typeof (global as any).rateLimitCallback === 'function') {
+            (global as any).rateLimitCallback(retryAfter, attempt, maxRetries);
+          }
+
+          // Wait for the specified time
+          await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+
+          // Check for abort during wait
+          if (this.aborted) {
+            throw new Error('Execution aborted by user');
+          }
+
+          // Try again
+          continue;
+        }
+
+        // If it's not a rate limit error, throw immediately
+        throw error;
+      }
+    }
+
+    // If we exhausted all retries, throw the last error
+    throw lastError || new Error('Failed to execute Claude request after retries');
+  }
+
+  /**
+   * Execute a task with Claude agent (with tool handling and rate limit retry)
+   */
+  async executeWithClaude(task: string, files?: FileAttachment[]): Promise<string> {
+    // Check for abort at the start
+    if (this.aborted) {
+      throw new Error('Execution aborted by user');
+    }
+
+    // Simple approach: let Claude handle tool calls internally
+    // We just provide tool executors and Claude manages its own message history
+    const result = await this.executeClaudeWithToolHandling(task, files);
+    return result;
+  }
+
+  /**
+   * Execute Claude with automatic tool handling
+   */
+  private async executeClaudeWithToolHandling(task: string, files?: FileAttachment[]): Promise<string> {
+    const messages: Message[] = [{ role: 'user', content: task, files }];
+    let toolCallIterations = 0;
+    const MAX_TOOL_ITERATIONS = 10;
+
+    while (true) {
+      // Check for abort
+      if (this.aborted) {
+        throw new Error('Execution aborted by user');
+      }
+
+      // Prevent infinite loops
+      if (toolCallIterations >= MAX_TOOL_ITERATIONS) {
+        throw new Error(`Maximum tool call iterations (${MAX_TOOL_ITERATIONS}) exceeded`);
+      }
+
+      // Debug: Log message structure before calling Claude
+      console.log(`[Orchestrator] Iteration ${toolCallIterations + 1}: Calling Claude with ${messages.length} messages: [${messages.map(m => m.role).join(', ')}]`);
+
+      // Get response from Claude (with rate limit retry)
+      const response = await this.executeClaudeWithRetry(messages);
+
+      // If no tool calls, we're done
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        return response.content;
+      }
+
+      // We have tool calls - increment counter and process them
+      toolCallIterations++;
+      console.log(`[Orchestrator] Processing ${response.toolCalls.length} tool call(s) (iteration ${toolCallIterations})`);
+
+      // Execute all tool calls
+      const toolResults: ToolResult[] = [];
+      for (const toolCall of response.toolCalls) {
+        console.log(`[Claude] Tool call: ${toolCall.name}`);
+
+        let toolResult: any;
+
+        if (toolCall.name === 'invoke_gemini') {
+          const geminiTask = toolCall.input.task as string;
+          const context = toolCall.input.context as string | undefined;
+          const fullTask = context ? `${geminiTask}\n\nContext: ${context}` : geminiTask;
+          toolResult = await this.executeWithGemini(fullTask);
+        } else if (toolCall.name === 'invoke_claude') {
+          const claudeTask = toolCall.input.task as string;
+          toolResult = await this.executeWithClaude(claudeTask);
+        } else if (toolCall.name.startsWith('mcp_')) {
+          toolResult = await this.claude.executeMCPTool(toolCall.name, toolCall.input);
+        } else {
+          toolResult = { error: `Unknown tool: ${toolCall.name}` };
+        }
+
+        toolResults.push({
+          toolCallId: toolCall.id,
+          output: toolResult,
+        });
+      }
+
+      // Build next messages array with proper structure for Claude API
+      // The pattern must be: user -> assistant (with tool_use) -> user (with tool_result)
+
+      // Add the assistant's response that contains tool_use blocks
+      const assistantMessage = {
+        role: 'assistant' as const,
+        content: response.rawContent || response.content
+      };
+      console.log(`[Orchestrator] Adding assistant message with ${Array.isArray(assistantMessage.content) ? assistantMessage.content.length : 1} content block(s)`);
+      messages.push(assistantMessage);
+
+      // Add tool results as user message
+      const userMessage = {
+        role: 'user' as const,
+        content: toolResults.map(tr => ({
+          type: 'tool_result',
+          tool_use_id: tr.toolCallId,
+          content: JSON.stringify(tr.output)
+        })) as any
+      };
+      console.log(`[Orchestrator] Adding user message with ${toolResults.length} tool result(s)`);
+      messages.push(userMessage);
+
+      console.log(`[Orchestrator] Messages array now has ${messages.length} messages with roles: [${messages.map(m => m.role).join(', ')}]`);
+
+      // Loop continues - next iteration will call Claude with updated messages
+    }
+  }
+
+  /**
+   * Execute a task with Gemini agent (with tool handling)
+   */
+  async executeWithGemini(task: string, files?: FileAttachment[]): Promise<string> {
+    // Check for abort at the start
+    if (this.aborted) {
+      throw new Error('Execution aborted by user');
+    }
+
+    const messages: Message[] = [{ role: 'user', content: task, files }];
+    let response = await this.gemini.execute(messages);
+    let result = response.content;
+
+    // Handle tool calls
+    while (response.toolCalls && response.toolCalls.length > 0) {
+      const toolResults: ToolResult[] = [];
+
+      for (const toolCall of response.toolCalls) {
+        console.log(`[Gemini] Tool call: ${toolCall.name}`);
+
+        let toolResult: any;
+
+        if (toolCall.name === 'web_search') {
+          // Simulate web search (in production, integrate with actual search API)
+          toolResult = this.simulateWebSearch(
+            toolCall.input.query as string,
+            toolCall.input.num_results as number
+          );
+        } else if (toolCall.name === 'summarize') {
+          // The summarization is handled by Gemini itself
+          toolResult = { summary: 'Summarization requested' };
+        } else {
+          toolResult = { error: `Unknown tool: ${toolCall.name}` };
+        }
+
+        toolResults.push({
+          toolCallId: toolCall.id,
+          output: toolResult,
+        });
+      }
+
+      // Add assistant's response with tool calls to messages
+      messages.push({
+        role: 'assistant',
+        content: response.rawContent || result
+      });
+
+      // Continue conversation with tool results
+      response = await this.gemini.executeWithTools(messages, toolResults);
+      result = response.content;
+    }
+
+    return result;
+  }
+
+  /**
+   * Execute a task with Manager agent
+   */
+  async executeWithManager(task: string): Promise<string> {
+    // Check for abort at the start
+    if (this.aborted) {
+      throw new Error('Execution aborted by user');
+    }
+
+    const messages: Message[] = [{ role: 'user', content: task }];
+    const response = await this.manager.execute(messages);
+    return response.content;
+  }
+
+  /**
+   * Direct chat with a specific agent
+   */
+  async chat(message: string, agent: 'claude' | 'gemini' | 'manager' = 'claude'): Promise<string> {
+    this.conversationHistory.push({ role: 'user', content: message });
+
+    let response: string;
+    switch (agent) {
+      case 'claude':
+        response = await this.executeWithClaude(message);
+        break;
+      case 'gemini':
+        response = await this.executeWithGemini(message);
+        break;
+      case 'manager':
+        response = await this.executeWithManager(message);
+        break;
+    }
+
+    this.conversationHistory.push({ role: 'assistant', content: response });
+    return response;
+  }
+
+  /**
+   * Format plan for display
+   */
+  private formatPlan(plan: Plan): string {
+    let output = `Goal: ${plan.goal}\n`;
+    output += `Estimated Complexity: ${plan.estimatedComplexity}\n\n`;
+    output += 'Execution Steps:\n';
+
+    for (const step of plan.steps) {
+      output += `\n${step.step}. ${step.description}\n`;
+      output += `   Agent: ${step.agent}\n`;
+      output += `   Reasoning: ${step.reasoning}\n`;
+    }
+
+    return output;
+  }
+
+  /**
+   * Simulate web search (placeholder - integrate with real search API)
+   */
+  private simulateWebSearch(query: string, numResults: number = 5): any {
+    return {
+      query,
+      results: [
+        {
+          title: `Result 1 for "${query}"`,
+          url: 'https://example.com/1',
+          snippet: 'This is a simulated search result. Integrate with a real search API for production use.',
+        },
+      ],
+      note: 'This is a simulated search. Integrate with Google Search API, Bing API, or similar for production.',
+    };
+  }
+
+  /**
+   * Get conversation history
+   */
+  getHistory(): Message[] {
+    return [...this.conversationHistory];
+  }
+
+  /**
+   * Clear conversation history
+   */
+  clearHistory(): void {
+    this.conversationHistory = [];
+  }
+}

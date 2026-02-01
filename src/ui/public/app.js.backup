@@ -1,0 +1,589 @@
+// WebSocket connection
+let ws = null;
+let currentPlan = null;
+let stepResults = {};
+let uploadedFiles = []; // Currently uploaded files for this session
+
+// Initialize WebSocket
+function initWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+    ws.onopen = () => {
+        updateStatus('connected');
+        addLog('WebSocket connected', 'success');
+    };
+
+    ws.onclose = () => {
+        updateStatus('disconnected');
+        addLog('WebSocket disconnected', 'error');
+        // Reconnect after 3 seconds
+        setTimeout(initWebSocket, 3000);
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleWebSocketMessage(data);
+    };
+
+    ws.onerror = (error) => {
+        addLog('WebSocket error', 'error');
+        console.error('WebSocket error:', error);
+    };
+}
+
+// Handle WebSocket messages
+function handleWebSocketMessage(data) {
+    addLog(`${data.type}: ${JSON.stringify(data)}`, 'info');
+
+    switch (data.type) {
+        case 'status':
+            addLog(data.message, 'success');
+            break;
+
+        case 'chat_start':
+            addChatMessage('system', `${data.agent} is thinking...`);
+            break;
+
+        case 'chat_complete':
+            addChatMessage(data.agent, data.response);
+            break;
+
+        case 'plan_created':
+            currentPlan = data.plan;
+            displayPlan(data.plan);
+            addLog('Plan created', 'success');
+            break;
+
+        case 'step_start':
+            updateStepStatus(data.step.step, 'executing');
+            addLog(`Executing step ${data.step.step} with ${data.step.agent}`, 'info');
+            break;
+
+        case 'step_complete':
+            stepResults[data.step.step] = data.result;
+            updateStepStatus(data.step.step, 'completed', data.result);
+            addLog(`Step ${data.step.step} completed`, 'success');
+            break;
+
+        case 'execution_start':
+            addLog(`Starting task execution: ${data.task}`, 'info');
+            break;
+
+        case 'execution_complete':
+            addLog('Task execution completed', 'success');
+            break;
+
+        case 'error':
+            addLog(`Error: ${data.error}`, 'error');
+            alert('Error: ' + data.error);
+            break;
+
+        case 'history_cleared':
+            document.getElementById('chat-messages').innerHTML = '';
+            addLog('Chat history cleared', 'info');
+            break;
+    }
+}
+
+// Update connection status
+function updateStatus(status) {
+    const statusEl = document.getElementById('status');
+    statusEl.textContent = status === 'connected' ? '● Connected' : '● Disconnected';
+    statusEl.className = 'status ' + status;
+}
+
+// Add log entry
+function addLog(message, type = 'info') {
+    const logEl = document.getElementById('activity-log');
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type}`;
+    const timestamp = new Date().toLocaleTimeString();
+    entry.textContent = `[${timestamp}] ${message}`;
+    logEl.appendChild(entry);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+// Clear logs
+function clearLogs() {
+    document.getElementById('activity-log').innerHTML = '';
+}
+
+// Tab switching
+function switchTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    event.target.classList.add('active');
+
+    // Update tab content
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    document.getElementById(`${tabName}-tab`).classList.add('active');
+
+    // Load data for specific tabs
+    if (tabName === 'agents') {
+        loadAgents();
+    } else if (tabName === 'config') {
+        loadConfig();
+    }
+}
+
+// Chat functions
+// Chat UI functions removed - using only Execute Task workflow
+
+// Plan execution functions
+async function createPlanOnly() {
+    const task = document.getElementById('task-input').value.trim();
+    if (!task) {
+        alert('Please enter a task description');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/plan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error);
+        }
+
+        const data = await response.json();
+        currentPlan = data.plan;
+        displayPlan(data.plan, false);
+    } catch (error) {
+        addLog(`Plan creation error: ${error.message}`, 'error');
+        alert('Error: ' + error.message);
+    }
+}
+
+async function executeTask() {
+    const task = document.getElementById('task-input').value.trim();
+    if (!task) {
+        alert('Please enter a task description');
+        return;
+    }
+
+    stepResults = {};
+
+    // Get file IDs to send
+    const fileIds = uploadedFiles.map(f => f.filename);
+
+    // Show abort button
+    document.getElementById('abort-btn').style.display = 'inline-block';
+
+    try {
+        const response = await fetch('/api/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                task,
+                fileIds: fileIds.length > 0 ? fileIds : undefined
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error);
+        }
+
+        const data = await response.json();
+        if (data.aborted) {
+            addLog('Execution was aborted', 'warning');
+        }
+
+        // Clear uploaded files after execution
+        clearUploadedFiles();
+    } catch (error) {
+        addLog(`Execution error: ${error.message}`, 'error');
+        alert('Error: ' + error.message);
+    } finally {
+        // Hide abort button when done
+        document.getElementById('abort-btn').style.display = 'none';
+    }
+}
+
+function displayPlan(plan, showExecuting = true) {
+    const viewCard = document.getElementById('plan-view-card');
+    const viewEl = document.getElementById('plan-view');
+
+    viewCard.style.display = 'block';
+
+    let html = `
+        <div style="margin-bottom: 20px;">
+            <h3 style="color: #667eea;">Goal</h3>
+            <p>${plan.goal}</p>
+            <p style="margin-top: 10px;"><strong>Complexity:</strong>
+                <span style="color: ${plan.estimatedComplexity === 'high' ? '#dc3545' : plan.estimatedComplexity === 'medium' ? '#ffc107' : '#28a745'}">
+                    ${plan.estimatedComplexity.toUpperCase()}
+                </span>
+            </p>
+        </div>
+        <h3 style="color: #667eea; margin-bottom: 15px;">Steps</h3>
+    `;
+
+    plan.steps.forEach(step => {
+        html += `
+            <div class="step" id="step-${step.step}">
+                <div class="step-header">
+                    <span class="step-number">Step ${step.step}</span>
+                    <span class="agent-badge">${step.agent.toUpperCase()}</span>
+                </div>
+                <p style="font-weight: 600; margin-bottom: 8px;">${step.description}</p>
+                <p style="color: #666; font-size: 14px;"><em>Reasoning:</em> ${step.reasoning}</p>
+                <div class="step-result" id="result-${step.step}" style="display: none;"></div>
+            </div>
+        `;
+    });
+
+    viewEl.innerHTML = html;
+    viewCard.scrollIntoView({ behavior: 'smooth' });
+}
+
+function updateStepStatus(stepNumber, status, result = null) {
+    const stepEl = document.getElementById(`step-${stepNumber}`);
+    if (!stepEl) return;
+
+    stepEl.className = `step ${status}`;
+
+    if (result) {
+        const resultEl = document.getElementById(`result-${stepNumber}`);
+        if (resultEl) {
+            resultEl.style.display = 'block';
+            resultEl.textContent = result;
+        }
+    }
+}
+
+// Agent management
+async function loadAgents() {
+    try {
+        const response = await fetch('/api/agents');
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error);
+        }
+
+        const data = await response.json();
+        displayAgents(data.agents);
+    } catch (error) {
+        addLog(`Error loading agents: ${error.message}`, 'error');
+    }
+}
+
+function displayAgents(agents) {
+    const gridEl = document.getElementById('agents-grid');
+
+    gridEl.innerHTML = agents.map(agent => `
+        <div class="agent-card">
+            <h3>${agent.name}</h3>
+            <p style="color: #666; margin-bottom: 10px;">${agent.description}</p>
+            <div class="capabilities">
+                <strong>Capabilities:</strong>
+                <div style="margin-top: 8px;">
+                    ${agent.capabilities.map(cap =>
+                        `<span class="capability-tag">${cap.replace(/_/g, ' ')}</span>`
+                    ).join('')}
+                </div>
+            </div>
+            ${agent.tools ? `
+                <div style="margin-top: 15px;">
+                    <strong>Available Tools:</strong>
+                    <div class="tool-list">
+                        ${agent.tools.map(tool =>
+                            `<span class="tool-tag">${tool}</span>`
+                        ).join('')}
+                    </div>
+                </div>
+            ` : ''}
+        </div>
+    `).join('');
+}
+
+// Load Claude models from API
+async function loadClaudeModels() {
+    try {
+        const response = await fetch('/api/models/claude');
+        const data = await response.json();
+
+        if (!data.models || !data.models.all) {
+            addLog('Using default Claude models', 'warning');
+            return;
+        }
+
+        const modelSelect = document.getElementById('claude-model');
+        const currentValue = modelSelect.value;
+
+        // Build options HTML
+        let optionsHTML = '';
+
+        // Add latest models first
+        if (data.models.latest.sonnet) {
+            optionsHTML += `<option value="${data.models.latest.sonnet}">Latest Sonnet (${data.models.latest.sonnet})</option>`;
+        }
+        if (data.models.latest.opus) {
+            optionsHTML += `<option value="${data.models.latest.opus}">Latest Opus (${data.models.latest.opus})</option>`;
+        }
+        if (data.models.latest.haiku) {
+            optionsHTML += `<option value="${data.models.latest.haiku}">Latest Haiku (${data.models.latest.haiku})</option>`;
+        }
+
+        // Add separator
+        if (data.models.all.sonnet.length > 1 || data.models.all.opus.length > 1 || data.models.all.haiku.length > 1) {
+            optionsHTML += '<option disabled>──────────</option>';
+        }
+
+        // Add all Sonnet models
+        if (data.models.all.sonnet.length > 0) {
+            optionsHTML += '<option disabled>Sonnet Models:</option>';
+            data.models.all.sonnet.forEach(model => {
+                optionsHTML += `<option value="${model.id}">  ${model.name}</option>`;
+            });
+        }
+
+        // Add all Opus models
+        if (data.models.all.opus.length > 0) {
+            optionsHTML += '<option disabled>Opus Models:</option>';
+            data.models.all.opus.forEach(model => {
+                optionsHTML += `<option value="${model.id}">  ${model.name}</option>`;
+            });
+        }
+
+        // Add all Haiku models
+        if (data.models.all.haiku.length > 0) {
+            optionsHTML += '<option disabled>Haiku Models:</option>';
+            data.models.all.haiku.forEach(model => {
+                optionsHTML += `<option value="${model.id}">  ${model.name}</option>`;
+            });
+        }
+
+        modelSelect.innerHTML = optionsHTML;
+
+        // Restore previous value if it exists
+        if (currentValue && [...modelSelect.options].some(opt => opt.value === currentValue)) {
+            modelSelect.value = currentValue;
+        }
+
+        addLog('Loaded latest Claude models from API', 'success');
+    } catch (error) {
+        addLog(`Error loading Claude models: ${error.message}`, 'error');
+    }
+}
+
+// Load Gemini models from API
+async function loadGeminiModels() {
+    try {
+        const response = await fetch('/api/models/gemini');
+        const data = await response.json();
+
+        if (!data.models || data.models.length === 0) {
+            addLog('Using default Gemini models', 'warning');
+            // Fallback to hardcoded models
+            const modelSelect = document.getElementById('gemini-model');
+            modelSelect.innerHTML = `
+                <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Experimental)</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+            `;
+            return;
+        }
+
+        const modelSelect = document.getElementById('gemini-model');
+        const currentValue = modelSelect.value;
+
+        // Build options HTML from API models
+        let optionsHTML = '';
+
+        data.models.forEach(model => {
+            const displayName = model.name || model.id;
+            optionsHTML += `<option value="${model.id}" title="${model.description || ''}">${displayName}</option>`;
+        });
+
+        modelSelect.innerHTML = optionsHTML;
+
+        // Restore previous value if it exists
+        if (currentValue && [...modelSelect.options].some(opt => opt.value === currentValue)) {
+            modelSelect.value = currentValue;
+        }
+
+        addLog('Loaded latest Gemini models from API', 'success');
+    } catch (error) {
+        addLog(`Error loading Gemini models: ${error.message}`, 'error');
+        // Fallback to hardcoded models on error
+        const modelSelect = document.getElementById('gemini-model');
+        modelSelect.innerHTML = `
+            <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Experimental)</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+        `;
+    }
+}
+
+// Configuration management
+async function loadConfig() {
+    try {
+        const response = await fetch('/api/config');
+        const config = await response.json();
+
+        // Load models dynamically from both APIs
+        await Promise.all([
+            loadClaudeModels(),
+            loadGeminiModels()
+        ]);
+
+        // Set current values from backend config file
+        document.getElementById('claude-model').value = config.claudeConfig.model;
+        document.getElementById('claude-temp').value = config.claudeConfig.temperature;
+        document.getElementById('claude-tokens').value = config.claudeConfig.maxTokens;
+
+        document.getElementById('gemini-model').value = config.geminiConfig.model;
+        document.getElementById('gemini-temp').value = config.geminiConfig.temperature;
+        document.getElementById('gemini-tokens').value = config.geminiConfig.maxTokens;
+
+        addLog('Loaded model configuration from backend', 'success');
+    } catch (error) {
+        addLog(`Error loading config: ${error.message}`, 'error');
+    }
+}
+
+async function saveConfig() {
+    const config = {
+        claudeConfig: {
+            model: document.getElementById('claude-model').value,
+            temperature: parseFloat(document.getElementById('claude-temp').value),
+            maxTokens: parseInt(document.getElementById('claude-tokens').value),
+        },
+        geminiConfig: {
+            model: document.getElementById('gemini-model').value,
+            temperature: parseFloat(document.getElementById('gemini-temp').value),
+            maxTokens: parseInt(document.getElementById('gemini-tokens').value),
+        },
+    };
+
+    try {
+        const response = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error);
+        }
+
+        addLog('Model configuration saved to backend file', 'success');
+        alert('Model configuration saved successfully!\n\nSettings saved to magentic-config.json');
+    } catch (error) {
+        addLog(`Error saving config: ${error.message}`, 'error');
+        alert('Error: ' + error.message);
+    }
+}
+
+// Note: Export/Import removed - configure API keys and MCP in .env file
+
+// Chat history functions removed - using only Execute Task workflow
+
+// Abort execution
+async function abortExecution() {
+    try {
+        const response = await fetch('/api/execute/abort', {
+            method: 'POST',
+        });
+
+        if (response.ok) {
+            addLog('Execution aborted', 'warning');
+            document.getElementById('abort-btn').style.display = 'none';
+        }
+    } catch (error) {
+        addLog(`Error aborting execution: ${error.message}`, 'error');
+    }
+}
+
+// File upload handling
+async function handleFileUpload(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+        formData.append('files', files[i]);
+    }
+
+    try {
+        addLog(`Uploading ${files.length} file(s)...`, 'info');
+
+        const response = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error);
+        }
+
+        const data = await response.json();
+        uploadedFiles.push(...data.files);
+
+        displayUploadedFiles();
+        addLog(`Uploaded ${data.files.length} file(s) successfully`, 'success');
+
+        // Clear file input
+        event.target.value = '';
+    } catch (error) {
+        addLog(`Error uploading files: ${error.message}`, 'error');
+        alert('Error uploading files: ' + error.message);
+    }
+}
+
+function displayUploadedFiles() {
+    // Update both chat and task displays
+    const displays = [
+        { container: document.getElementById('uploaded-files-display'), list: document.getElementById('files-list') },
+        { container: document.getElementById('uploaded-files-display-task'), list: document.getElementById('files-list-task') }
+    ];
+
+    displays.forEach(({ container, list }) => {
+        if (!container || !list) return;
+
+        if (uploadedFiles.length === 0) {
+            container.style.display = 'none';
+            return;
+        }
+
+        container.style.display = 'block';
+        list.innerHTML = uploadedFiles.map((file, index) => `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 5px; background: white; margin-top: 5px; border-radius: 3px;">
+                <span style="font-size: 13px;">📄 ${file.originalName} (${(file.size / 1024).toFixed(2)}KB)</span>
+                <button onclick="removeFile(${index})" style="background: #dc3545; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;">✕</button>
+            </div>
+        `).join('');
+    });
+}
+
+function removeFile(index) {
+    uploadedFiles.splice(index, 1);
+    displayUploadedFiles();
+    addLog('File removed', 'info');
+}
+
+function clearUploadedFiles() {
+    uploadedFiles = [];
+    displayUploadedFiles();
+}
+
+// Initialize application
+document.addEventListener('DOMContentLoaded', () => {
+    // Initialize WebSocket
+    initWebSocket();
+
+    // Load initial data
+    addLog('Application initialized', 'success');
+});
