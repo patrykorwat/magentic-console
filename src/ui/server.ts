@@ -81,7 +81,7 @@ let config = {
     customPrompt: undefined as string | undefined,
   },
   ollamaConfig: {
-    model: 'SpeakLeash/bielik-11b-v3.0-instruct:Q6_K',
+    model: 'SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M',
     temperature: 0.7,
     maxTokens: 4096,
     customPrompt: undefined as string | undefined,
