@@ -69,7 +69,7 @@ let config = {
   googleApiKey: process.env.GOOGLE_API_KEY || '',
   mcpServers,
   claudeConfig: {
-    model: 'claude-3-7-sonnet-20250219',
+    model: 'claude-sonnet-4-5-20250929',
     temperature: 1,
     maxTokens: 4096,
     customPrompt: undefined as string | undefined,
@@ -446,7 +446,7 @@ app.get('/api/models/claude', async (req, res) => {
     res.json({
       models: {
         latest: {
-          sonnet: categorized.sonnet[0]?.id || 'claude-3-7-sonnet-20250219',
+          sonnet: categorized.sonnet[0]?.id || 'claude-sonnet-4-5-20250929',
           opus: categorized.opus[0]?.id || 'claude-3-opus-20240229',
           haiku: categorized.haiku[0]?.id || 'claude-3-5-haiku-20241022',
         },
@@ -619,7 +619,7 @@ app.get('/api/agents', (req, res) => {
   const agents = [
     {
       name: 'Manager',
-      model: 'claude-3-7-sonnet-20250219 (Opus 4)',
+      model: 'claude-sonnet-4-5-20250929 (Sonnet 4.5)',
       capabilities: ['planning', 'orchestration', 'delegation', 'coordination'],
       description: 'Creates execution plans and orchestrates tasks between agents',
     },

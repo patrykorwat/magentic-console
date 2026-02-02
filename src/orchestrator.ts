@@ -250,6 +250,22 @@ export class MagenticOrchestrator {
   }
 
   /**
+   * Truncate long tool results to prevent context overflow
+   */
+  private truncateToolResult(result: any, maxLength: number = 10000): string {
+    const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+
+    if (resultStr.length <= maxLength) {
+      return resultStr;
+    }
+
+    const truncated = resultStr.substring(0, maxLength);
+    const suffix = `\n\n[... skrócono ${resultStr.length - maxLength} znaków. Pełny wynik był za długi (${resultStr.length} znaków). Zadaj bardziej precyzyjne zapytanie aby uzyskać szczegóły.]`;
+
+    return truncated + suffix;
+  }
+
+  /**
    * Execute Claude with automatic tool handling
    */
   private async executeClaudeWithToolHandling(task: string, files?: FileAttachment[]): Promise<string> {
@@ -321,13 +337,13 @@ export class MagenticOrchestrator {
       console.log(`[Orchestrator] Adding assistant message with ${Array.isArray(assistantMessage.content) ? assistantMessage.content.length : 1} content block(s)`);
       messages.push(assistantMessage);
 
-      // Add tool results as user message
+      // Add tool results as user message (with truncation to prevent context overflow)
       const userMessage = {
         role: 'user' as const,
         content: toolResults.map(tr => ({
           type: 'tool_result',
           tool_use_id: tr.toolCallId,
-          content: JSON.stringify(tr.output)
+          content: this.truncateToolResult(tr.output, 10000)
         })) as any
       };
       console.log(`[Orchestrator] Adding user message with ${toolResults.length} tool result(s)`);

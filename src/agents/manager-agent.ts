@@ -30,7 +30,7 @@ export class ManagerAgent implements Agent {
   constructor(apiKey: string, defaultClaudeModel?: string) {
     this.client = new Anthropic({ apiKey });
     this.name = 'Manager';
-    this.model = 'claude-3-7-sonnet-20250219';
+    this.model = 'claude-sonnet-4-5-20250929';
     this.defaultClaudeModel = defaultClaudeModel || 'claude-sonnet-4-5-20250929';
     this.capabilities = ['planning', 'orchestration', 'delegation', 'coordination'];
     this.systemPrompt = `Jesteś Agentem Menedżera odpowiedzialnym za planowanie i orkiestrację zadań pomiędzy wyspecjalizowanymi agentami.
@@ -39,8 +39,9 @@ Dostępni agenci:
 1. Agent Claude - Specjalizuje się w głębokim rozumowaniu, ANALIZIE PLIKÓW PDF, pracy z bazami danych przez MCP, analizie kodu, generowaniu kodu i rozwiązywaniu złożonych problemów. Ma dostęp do narzędzi MCP i może czytać pliki PDF. PŁATNY ($). Używaj do: analizy plików PDF, złożonych operacji z bazą danych przez MCP, złożonej analizy danych, głębokiego rozumowania, zadań wymagających wieloetapowego myślenia.
 
    Dostępne modele Claude (WAŻNE - wybieraj mądrze ze względu na KOSZTY):
-   a) claude-3-5-haiku-20241022 - TANI, szybki model do prostych zadań (analiza tekstu, proste operacje, formatowanie)
-   b) claude-3-5-sonnet-20241022 - DROGI, najpotężniejszy model do złożonych zadań (głęboka analiza PDF, skomplikowane zapytania do bazy danych, rozumowanie wieloetapowe)
+   a) claude-haiku-4-5-20251001 - TANI, szybki model do prostych zadań (analiza tekstu, proste operacje, formatowanie)
+   b) claude-sonnet-4-5-20250929 - DROGI, potężny model do złożonych zadań (głęboka analiza PDF, skomplikowane zapytania do bazy danych, rozumowanie wieloetapowe)
+   c) claude-opus-4-5-20251101 - BARDZO DROGI, najpotężniejszy model do najtrudniejszych zadań (używaj TYLKO gdy Sonnet nie wystarcza!)
 
 2. Agent Gemini - Specjalizuje się w wyszukiwaniu w internecie, syntezie informacji TEKSTOWYCH, szybkiej analizie i podsumowywaniu tekstu. NIE MOŻE czytać plików PDF bezpośrednio. PŁATNY ($). Używaj do: podsumowywania TEKSTU (nie plików!), syntezy informacji z poprzednich kroków, wyszukiwania informacji.
 
@@ -76,6 +77,13 @@ Podczas tworzenia planu:
 - Podaj uzasadnienie dla każdego przypisania (reasoning musi być PO POLSKU)
 - Oszacuj złożoność (low, medium, high)
 
+WAŻNE - LIMITY WYNIKÓW NARZĘDZI MCP:
+- Gdy Claude/Ollama używa narzędzi MCP (bazy danych), wyniki są automatycznie skracane do 10,000 znaków aby nie przekroczyć limitu kontekstu
+- W opisie zadania dla Claude/Ollama ZAWSZE dodaj instrukcję: "Używaj precyzyjnych zapytań z filtrami (WHERE, LIMIT). Pobieraj tylko niezbędne dane, nie całą bazę."
+- Jeśli zadanie wymaga analizy dużej ilości danych, podziel je na mniejsze kroki z konkretnymi filtrami/limitami
+- Przykład DOBRY: "Znajdź top 10 rekordów spełniających warunek X (użyj WHERE, ORDER BY, LIMIT 10)"
+- Przykład ZŁY: "Pobierz wszystkie rekordy z bazy" (może zwrócić tysiące rekordów i przekroczyć limit kontekstu)
+
 Jeśli w zadaniu znajdują się załączone pliki, przeanalizuj które pliki są potrzebne w którym kroku i przypisz je używając pola "requiredFiles" (lista nazw plików).
 
 Zwróć plan w formacie JSON:
@@ -86,7 +94,7 @@ Zwróć plan w formacie JSON:
       "step": 1,
       "description": "Co należy zrobić",
       "agent": "claude|gemini|ollama|manager",
-      "model": "claude-3-5-haiku-20241022|claude-3-5-sonnet-20241022|llama3.2", // OPCJONALNE - dla Claude/Ollama, wybierz mądrze ze względu na koszty!
+      "model": "claude-haiku-4-5-20251001|claude-sonnet-4-5-20250929|qwen3:8b", // OPCJONALNE - dla Claude/Ollama, wybierz mądrze ze względu na koszty!
       "reasoning": "Dlaczego ten agent i model są najlepiej dopasowane - PO POLSKU (wyjaśnij wybór: Ollama dla prostych zadań, Gemini/Haiku dla średnich, Sonnet dla złożonych)",
       "requiredFiles": ["nazwa_pliku.pdf"] // OPCJONALNE - tylko jeśli krok wymaga konkretnych plików (tylko Claude!)
     }
@@ -265,6 +273,13 @@ Podczas tworzenia planu:
 - Przypisz każdy krok do najbardziej odpowiedniego agenta (claude, gemini, ollama lub manager)
 - Podaj uzasadnienie dla każdego przypisania (reasoning musi być PO POLSKU)
 - Oszacuj złożoność (low, medium, high)
+
+WAŻNE - LIMITY WYNIKÓW NARZĘDZI MCP:
+- Gdy Claude/Ollama używa narzędzi MCP (Neo4j, inne bazy danych), wyniki są automatycznie skracane do 10,000 znaków aby nie przekroczyć limitu kontekstu
+- W opisie zadania dla Claude/Ollama ZAWSZE dodaj instrukcję: "Używaj precyzyjnych zapytań z filtrami (WHERE, LIMIT). Pobieraj tylko niezbędne dane, nie całą bazę."
+- Jeśli zadanie wymaga analizy dużej ilości danych, podziel je na mniejsze kroki z konkretnymi filtrami/limitami
+- Przykład DOBRY: "Znajdź top 10 rekordów spełniających warunek X (użyj WHERE, ORDER BY, LIMIT 10)"
+- Przykład ZŁY: "Pobierz wszystkie rekordy z bazy" (może zwrócić tysiące rekordów i przekroczyć limit kontekstu)
 
 Jeśli w zadaniu znajdują się załączone pliki, przeanalizuj które pliki są potrzebne w którym kroku i przypisz je używając pola "requiredFiles" (lista nazw plików).
 
