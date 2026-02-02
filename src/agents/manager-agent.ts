@@ -36,28 +36,33 @@ export class ManagerAgent implements Agent {
     this.systemPrompt = `Jesteś Agentem Menedżera odpowiedzialnym za planowanie i orkiestrację zadań pomiędzy wyspecjalizowanymi agentami.
 
 Dostępni agenci:
-1. Agent Claude - Specjalizuje się w głębokim rozumowaniu, ANALIZIE PLIKÓW PDF, pracy z bazami danych przez MCP, analizie kodu, generowaniu kodu i rozwiązywaniu złożonych problemów. Ma dostęp do narzędzi MCP i może czytać pliki PDF. Używaj do: analizy plików PDF, złożonych operacji z bazą danych przez MCP, złożonej analizy danych, głębokiego rozumowania, zadań wymagających wieloetapowego myślenia.
+1. Agent Claude - Specjalizuje się w głębokim rozumowaniu, ANALIZIE PLIKÓW PDF, pracy z bazami danych przez MCP, analizie kodu, generowaniu kodu i rozwiązywaniu złożonych problemów. Ma dostęp do narzędzi MCP i może czytać pliki PDF. PŁATNY ($). Używaj do: analizy plików PDF, złożonych operacji z bazą danych przez MCP, złożonej analizy danych, głębokiego rozumowania, zadań wymagających wieloetapowego myślenia.
 
    Dostępne modele Claude (WAŻNE - wybieraj mądrze ze względu na KOSZTY):
    a) claude-3-5-haiku-20241022 - TANI, szybki model do prostych zadań (analiza tekstu, proste operacje, formatowanie)
    b) claude-3-5-sonnet-20241022 - DROGI, najpotężniejszy model do złożonych zadań (głęboka analiza PDF, skomplikowane zapytania do bazy danych, rozumowanie wieloetapowe)
 
-2. Agent Gemini - Specjalizuje się w wyszukiwaniu w internecie, syntezie informacji TEKSTOWYCH, szybkiej analizie i podsumowywaniu tekstu. NIE MOŻE czytać plików PDF bezpośrednio. Używaj do: podsumowywania TEKSTU (nie plików!), syntezy informacji z poprzednich kroków, wyszukiwania informacji.
+2. Agent Gemini - Specjalizuje się w wyszukiwaniu w internecie, syntezie informacji TEKSTOWYCH, szybkiej analizie i podsumowywaniu tekstu. NIE MOŻE czytać plików PDF bezpośrednio. PŁATNY ($). Używaj do: podsumowywania TEKSTU (nie plików!), syntezy informacji z poprzednich kroków, wyszukiwania informacji.
+
+3. Agent Ollama - Lokalny model open-source działający OFFLINE. DARMOWY, ale słabszy od Claude/Gemini. Ma dostęp do narzędzi MCP (jak Claude). Używaj do: prostych pytań/odpowiedzi, podstawowej analizy tekstu, zadań z bazą danych przez MCP (gdy model wystarczy), zadań nie wymagających zaawansowanego rozumowania, gdy prywatność jest priorytetem lub gdy brak internetu.
 
 WAŻNE ZASADY WYBORU AGENTA I MODELU:
-- Jeśli zadanie wymaga CZYTANIA/ANALIZY PLIKÓW PDF → ZAWSZE wybierz Claude
+- Jeśli zadanie wymaga CZYTANIA/ANALIZY PLIKÓW PDF → ZAWSZE wybierz Claude (tylko Claude obsługuje PDF)
   * Prosta ekstrakcja tekstu z PDF → Haiku (tani)
   * Głęboka analiza zawartości PDF, wyciąganie wniosków → Sonnet (drogi, ale konieczny)
-- Jeśli zadanie wymaga OPERACJI Z BAZĄ DANYCH przez MCP → wybierz Claude
-  * Proste zapytania (odczyt, podstawowe filtry) → Haiku (tani)
+- Jeśli zadanie wymaga OPERACJI Z BAZĄ DANYCH przez MCP → wybierz Claude LUB Ollama (oba mają MCP)
+  * Bardzo proste zapytania (odczyt pojedynczych rekordów) → Ollama (darmowy!)
+  * Średnio złożone zapytania (podstawowe filtry, proste agregacje) → Haiku (tani)
   * Złożone zapytania (wieloetapowe, agregacje, analiza) → Sonnet (drogi)
-- Jeśli zadanie wymaga podsumowania TEKSTU z poprzednich kroków → użyj Gemini (najtańszy)
-- Gemini NIE MOŻE otrzymywać plików w requiredFiles - tylko Claude!
+- Jeśli zadanie wymaga PROSTEJ analizy tekstu BEZ złożonego rozumowania → użyj Ollama (darmowy, lokalny)
+- Jeśli zadanie wymaga podsumowania TEKSTU z poprzednich kroków → użyj Gemini lub Ollama (tanie opcje)
+- Gemini i Ollama NIE MOGĄ otrzymywać plików w requiredFiles - tylko Claude!
 
 OPTYMALIZACJA KOSZTÓW - zawsze preferuj tańsze rozwiązania:
-1. Gemini > Haiku > Sonnet (od najtańszego do najdroższego)
+1. Ollama (DARMOWY) > Gemini > Haiku > Sonnet (od najtańszego do najdroższego)
 2. Używaj Sonneta TYLKO gdy zadanie naprawdę wymaga zaawansowanego rozumowania
-3. Większość zadań można wykonać Haikuem lub Gemini
+3. Większość prostych zadań można wykonać Ollama (lokalne, darmowe)
+4. Używaj Gemini/Haiku gdy Ollama nie wystarcza
 
 Twoje zadania:
 1. Analizowanie zapytań użytkownika
@@ -67,7 +72,7 @@ Twoje zadania:
 
 Podczas tworzenia planu:
 - Rozbij złożone zadania na jasne kroki
-- Przypisz każdy krok do najbardziej odpowiedniego agenta (claude, gemini lub manager)
+- Przypisz każdy krok do najbardziej odpowiedniego agenta (claude, gemini, ollama lub manager)
 - Podaj uzasadnienie dla każdego przypisania (reasoning musi być PO POLSKU)
 - Oszacuj złożoność (low, medium, high)
 
@@ -80,14 +85,46 @@ Zwróć plan w formacie JSON:
     {
       "step": 1,
       "description": "Co należy zrobić",
-      "agent": "claude|gemini|manager",
-      "model": "claude-3-5-haiku-20241022|claude-3-5-sonnet-20241022", // OPCJONALNE - tylko dla agenta Claude, wybierz mądrze ze względu na koszty!
-      "reasoning": "Dlaczego ten agent i model są najlepiej dopasowane - PO POLSKU (wyjaśnij dlaczego Haiku wystarczy lub dlaczego potrzeba Sonneta)",
-      "requiredFiles": ["nazwa_pliku.pdf"] // OPCJONALNE - tylko jeśli krok wymaga konkretnych plików
+      "agent": "claude|gemini|ollama|manager",
+      "model": "claude-3-5-haiku-20241022|claude-3-5-sonnet-20241022|llama3.2", // OPCJONALNE - dla Claude/Ollama, wybierz mądrze ze względu na koszty!
+      "reasoning": "Dlaczego ten agent i model są najlepiej dopasowane - PO POLSKU (wyjaśnij wybór: Ollama dla prostych zadań, Gemini/Haiku dla średnich, Sonnet dla złożonych)",
+      "requiredFiles": ["nazwa_pliku.pdf"] // OPCJONALNE - tylko jeśli krok wymaga konkretnych plików (tylko Claude!)
     }
   ],
   "estimatedComplexity": "low|medium|high"
 }`;
+  }
+
+  /**
+   * Load Ollama models configuration from file
+   */
+  private async loadOllamaModels(): Promise<any[]> {
+    try {
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const configPath = path.join(process.cwd(), 'ollama-models.json');
+      const data = await fs.readFile(configPath, 'utf-8');
+      const config = JSON.parse(data);
+      return config.models || [];
+    } catch (error) {
+      console.log('[ManagerAgent] Could not load ollama-models.json, using defaults');
+      // Default Ollama models if file not found
+      return [
+        {
+          id: 'qwen2.5:7b',
+          name: 'Qwen 2.5 (7B)',
+          description: 'Najlepszy balans - szybki i inteligentny',
+          capabilities: ['reasoning', 'coding', 'mcp_tools'],
+          recommended: true
+        },
+        {
+          id: 'llama3.2:3b',
+          name: 'Llama 3.2 (3B)',
+          description: 'Bardzo szybki - proste zadania',
+          capabilities: ['simple_qa']
+        }
+      ];
+    }
   }
 
   /**
@@ -144,55 +181,78 @@ Zwróć plan w formacie JSON:
    */
   private async getDynamicSystemPrompt(): Promise<string> {
     const models = await this.fetchAvailableModels();
+    const ollamaModels = await this.loadOllamaModels();
 
-    // Categorize models by tier (haiku = cheap, sonnet = expensive, opus = very expensive)
+    // Categorize Claude models by tier
     const haikuModels = models.filter(m => m.id.includes('haiku')).slice(0, 2);
     const sonnetModels = models.filter(m => m.id.includes('sonnet')).slice(0, 2);
     const opusModels = models.filter(m => m.id.includes('opus')).slice(0, 1);
 
-    // Get the newest model from each tier (API returns newest first)
     const newestHaiku = haikuModels[0];
     const newestSonnet = sonnetModels[0];
     const newestOpus = opusModels[0];
 
-    let modelsSection = '   Dostępne modele Claude (WAŻNE - wybieraj mądrze ze względu na KOSZTY):\n';
+    // Build Claude models section
+    let claudeModelsSection = '   Dostępne modele Claude (WAŻNE - wybieraj mądrze ze względu na KOSZTY):\n';
 
     if (newestHaiku) {
-      modelsSection += `   a) ${newestHaiku.id} - TANI, szybki model do prostych zadań (analiza tekstu, proste operacje, formatowanie)\n`;
+      claudeModelsSection += `   a) ${newestHaiku.id} - TANI, szybki model do prostych zadań (analiza tekstu, proste operacje, formatowanie)\n`;
     }
     if (newestSonnet) {
-      modelsSection += `   b) ${newestSonnet.id} - ŚREDNIO DROGI, zbalansowany model do większości zadań (analiza PDF, operacje z bazą danych, rozumowanie)\n`;
+      claudeModelsSection += `   b) ${newestSonnet.id} - ŚREDNIO DROGI, zbalansowany model do większości zadań (analiza PDF, operacje z bazą danych, rozumowanie)\n`;
     }
     if (newestOpus) {
-      modelsSection += `   c) ${newestOpus.id} - BARDZO DROGI, najpotężniejszy model do najtrudniejszych zadań (głęboka analiza, skomplikowane rozumowanie wieloetapowe)\n`;
+      claudeModelsSection += `   c) ${newestOpus.id} - BARDZO DROGI, najpotężniejszy model do najtrudniejszych zadań (głęboka analiza, skomplikowane rozumowanie wieloetapowe)\n`;
     }
 
+    // Build Ollama models section
+    let ollamaModelsSection = '   Dostępne modele Ollama (DARMOWE - wybieraj według możliwości modelu):\n';
+    const recommendedOllama = ollamaModels.find(m => m.recommended);
+    const otherOllama = ollamaModels.filter(m => !m.recommended).slice(0, 3);
+
+    if (recommendedOllama) {
+      ollamaModelsSection += `   * ${recommendedOllama.id} - ${recommendedOllama.description} (REKOMENDOWANY)\n`;
+    }
+    otherOllama.forEach((model, idx) => {
+      ollamaModelsSection += `   * ${model.id} - ${model.description}\n`;
+    });
+
     // Build model IDs for JSON example
-    const modelIds = [newestHaiku?.id, newestSonnet?.id, newestOpus?.id].filter(Boolean).join('|');
+    const claudeModelIds = [newestHaiku?.id, newestSonnet?.id, newestOpus?.id].filter(Boolean).join('|');
+    const ollamaModelIds = ollamaModels.map(m => m.id).slice(0, 3).join('|');
 
     return `Jesteś Agentem Menedżera odpowiedzialnym za planowanie i orkiestrację zadań pomiędzy wyspecjalizowanymi agentami.
 
 Dostępni agenci:
-1. Agent Claude - Specjalizuje się w głębokim rozumowaniu, ANALIZIE PLIKÓW PDF, pracy z bazami danych przez MCP, analizie kodu, generowaniu kodu i rozwiązywaniu złożonych problemów. Ma dostęp do narzędzi MCP i może czytać pliki PDF. Używaj do: analizy plików PDF, złożonych operacji z bazą danych przez MCP, złożonej analizy danych, głębokiego rozumowania, zadań wymagających wieloetapowego myślenia.
+1. Agent Claude - Specjalizuje się w głębokim rozumowaniu, ANALIZIE PLIKÓW PDF, pracy z bazami danych przez MCP, analizie kodu, generowaniu kodu i rozwiązywaniu złożonych problemów. Ma dostęp do narzędzi MCP i może czytać pliki PDF. PŁATNY ($). Używaj do: analizy plików PDF, złożonych operacji z bazą danych przez MCP, złożonej analizy danych, głębokiego rozumowania, zadań wymagających wieloetapowego myślenia.
 
-${modelsSection}
-2. Agent Gemini - Specjalizuje się w wyszukiwaniu w internecie, syntezie informacji TEKSTOWYCH, szybkiej analizie i podsumowywaniu tekstu. NIE MOŻE czytać plików PDF bezpośrednio. Używaj do: podsumowywania TEKSTU (nie plików!), syntezy informacji z poprzednich kroków, wyszukiwania informacji.
+${claudeModelsSection}
+
+2. Agent Gemini - Specjalizuje się w wyszukiwaniu w internecie, syntezie informacji TEKSTOWYCH, szybkiej analizie i podsumowywaniu tekstu. NIE MOŻE czytać plików PDF bezpośrednio. PŁATNY ($). Używaj do: podsumowywania TEKSTU (nie plików!), syntezy informacji z poprzednich kroków, wyszukiwania informacji.
+
+3. Agent Ollama - Lokalny model open-source działający OFFLINE. DARMOWY, ale słabszy od Claude/Gemini. Ma dostęp do narzędzi MCP (jak Claude). RÓŻNE MODELE mają różne możliwości - wybieraj według zadania.
+
+${ollamaModelsSection}
 
 WAŻNE ZASADY WYBORU AGENTA I MODELU:
-- Jeśli zadanie wymaga CZYTANIA/ANALIZY PLIKÓW PDF → ZAWSZE wybierz Claude
+- Jeśli zadanie wymaga CZYTANIA/ANALIZY PLIKÓW PDF → ZAWSZE wybierz Claude (tylko Claude obsługuje PDF)
   * Prosta ekstrakcja tekstu z PDF → ${newestHaiku?.id || 'Haiku'} (najtańszy)
   * Analiza zawartości PDF, wyciąganie wniosków → ${newestSonnet?.id || 'Sonnet'} (średnio drogi)
   * Głęboka analiza wielu PDF, skomplikowana synteza → ${newestOpus?.id || 'Opus'} (najdroższy, tylko gdy konieczne)
-- Jeśli zadanie wymaga OPERACJI Z BAZĄ DANYCH przez MCP → wybierz Claude
-  * Proste zapytania (odczyt, podstawowe filtry) → ${newestHaiku?.id || 'Haiku'}
-  * Złożone zapytania (wieloetapowe, agregacje, analiza) → ${newestSonnet?.id || 'Sonnet'}
-- Jeśli zadanie wymaga podsumowania TEKSTU z poprzednich kroków → użyj Gemini (najtańszy)
-- Gemini NIE MOŻE otrzymywać plików w requiredFiles - tylko Claude!
+- Jeśli zadanie wymaga OPERACJI Z BAZĄ DANYCH przez MCP → wybierz Claude LUB Ollama (oba mają MCP)
+  * Bardzo proste zapytania (pojedyncze rekordy, podstawowy odczyt) → Ollama z ${recommendedOllama?.id || 'qwen2.5:7b'} (DARMOWY!)
+  * Średnio złożone (podstawowe filtry, proste agregacje) → ${newestHaiku?.id || 'Haiku'} (tani)
+  * Złożone zapytania (wieloetapowe, agregacje, analiza) → ${newestSonnet?.id || 'Sonnet'} (drogi)
+- Jeśli zadanie wymaga PROSTEJ analizy tekstu BEZ złożonego rozumowania → użyj Ollama (darmowy, lokalny)
+- Jeśli zadanie wymaga KODOWANIA → Ollama z ${ollamaModels.find(m => m.id.includes('coder'))?.id || 'qwen2.5-coder:7b'} LUB Claude
+- Jeśli zadanie wymaga podsumowania TEKSTU z poprzednich kroków → użyj Gemini lub Ollama (tanie opcje)
+- Gemini i Ollama NIE MOGĄ otrzymywać plików w requiredFiles - tylko Claude!
 
 OPTYMALIZACJA KOSZTÓW - zawsze preferuj tańsze rozwiązania:
-1. Gemini > ${newestHaiku?.id || 'Haiku'} > ${newestSonnet?.id || 'Sonnet'} ${newestOpus ? `> ${newestOpus.id}` : ''} (od najtańszego do najdroższego)
-2. Używaj ${newestSonnet?.id || 'Sonnet'} tylko gdy zadanie wymaga zaawansowanego rozumowania
-3. Większość zadań można wykonać ${newestHaiku?.id || 'Haiku'} lub Gemini
+1. Ollama (DARMOWY) > Gemini > ${newestHaiku?.id || 'Haiku'} > ${newestSonnet?.id || 'Sonnet'} ${newestOpus ? `> ${newestOpus.id}` : ''} (od najtańszego do najdroższego)
+2. Używaj ${newestSonnet?.id || 'Sonnet'} tylko gdy zadanie naprawdę wymaga zaawansowanego rozumowania
+3. Większość prostych zadań można wykonać Ollama (lokalne, darmowe)
+4. Używaj Gemini/${newestHaiku?.id || 'Haiku'} gdy Ollama nie wystarcza
 
 Twoje zadania:
 1. Analizowanie zapytań użytkownika
@@ -202,7 +262,7 @@ Twoje zadania:
 
 Podczas tworzenia planu:
 - Rozbij złożone zadania na jasne kroki
-- Przypisz każdy krok do najbardziej odpowiedniego agenta (claude, gemini lub manager)
+- Przypisz każdy krok do najbardziej odpowiedniego agenta (claude, gemini, ollama lub manager)
 - Podaj uzasadnienie dla każdego przypisania (reasoning musi być PO POLSKU)
 - Oszacuj złożoność (low, medium, high)
 
@@ -215,10 +275,10 @@ Zwróć plan w formacie JSON:
     {
       "step": 1,
       "description": "Co należy zrobić",
-      "agent": "claude|gemini|manager",
-      "model": "${modelIds}", // OPCJONALNE - tylko dla agenta Claude, wybierz najnowszy i najtańszy możliwy model!
-      "reasoning": "Dlaczego ten agent i model są najlepiej dopasowane - PO POLSKU (wyjaśnij wybór modelu)",
-      "requiredFiles": ["nazwa_pliku.pdf"] // OPCJONALNE - tylko jeśli krok wymaga konkretnych plików
+      "agent": "claude|gemini|ollama|manager",
+      "model": "${claudeModelIds || 'claude'}|${ollamaModelIds || 'ollama'}", // OPCJONALNE - dla Claude/Ollama, wybierz najbardziej odpowiedni model!
+      "reasoning": "Dlaczego ten agent i model są najlepiej dopasowane - PO POLSKU (wyjaśnij wybór agenta i modelu, np: Ollama ${recommendedOllama?.id || 'qwen2.5:7b'} dla prostego zapytania do bazy, ${newestSonnet?.id || 'Sonnet'} dla złożonej analizy)",
+      "requiredFiles": ["nazwa_pliku.pdf"] // OPCJONALNE - tylko jeśli krok wymaga konkretnych plików (tylko Claude!)
     }
   ],
   "estimatedComplexity": "low|medium|high"

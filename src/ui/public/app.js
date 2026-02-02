@@ -57,8 +57,8 @@ function handleWebSocketMessage(data) {
             break;
 
         case 'step_start':
-            updateStepStatusRealtime(data.step.step, 'executing', data.step);
-            addLog(`Wykonywanie kroku ${data.step.step} z ${data.step.agent}`, 'info');
+            updateStepStatusRealtime(data.stepExecution.stepNumber, 'executing', data.stepExecution);
+            addLog(`Wykonywanie kroku ${data.stepExecution.stepNumber} z ${data.stepExecution.agent}`, 'info');
             break;
 
         case 'step_complete':
@@ -385,6 +385,7 @@ function displayAgents(agents) {
     gridEl.innerHTML = agents.map(agent => `
         <div class="agent-card">
             <h3>${agent.name}</h3>
+            ${agent.model ? `<p style="color: #999; font-size: 13px; margin-bottom: 8px;"><strong>Model:</strong> <code>${agent.model}</code></p>` : ''}
             <p style="color: #666; margin-bottom: 10px;">${agent.description}</p>
             <div class="capabilities">
                 <strong>Capabilities:</strong>
@@ -527,6 +528,71 @@ async function loadGeminiModels() {
     }
 }
 
+// Store Ollama models for description display
+let ollamaModelsData = [];
+
+async function loadOllamaModels() {
+    try {
+        const response = await fetch('/api/models/ollama');
+        const data = await response.json();
+
+        ollamaModelsData = data.models || [];
+
+        // Display all models as cards (info only)
+        const modelsListEl = document.getElementById('ollama-models-list');
+        if (modelsListEl) {
+            modelsListEl.innerHTML = data.models.map(model => `
+                <div class="agent-card" style="margin-bottom: 15px;">
+                    <h3>${model.name || model.id} ${model.recommended ? '⭐' : ''}</h3>
+                    <p style="color: #666; margin-bottom: 10px; font-size: 14px;"><strong>ID:</strong> <code>${model.id}</code></p>
+                    <p style="color: #666; margin-bottom: 10px;">${model.description || 'No description available'}</p>
+                    ${model.size ? `<p style="color: #999; font-size: 13px; margin-bottom: 10px;">Size: ${model.size}</p>` : ''}
+                    ${model.capabilities && model.capabilities.length > 0 ? `
+                        <div class="capabilities">
+                            <strong>Capabilities:</strong>
+                            <div style="margin-top: 8px;">
+                                ${model.capabilities.map(cap =>
+                                    `<span class="capability-tag">${cap.replace(/_/g, ' ')}</span>`
+                                ).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+
+        // Populate dropdown
+        const modelSelect = document.getElementById('ollama-model');
+        if (modelSelect) {
+            const currentValue = modelSelect.value;
+            let optionsHTML = '';
+
+            data.models.forEach(model => {
+                const displayName = model.name || model.id;
+                const recommended = model.recommended ? ' ⭐' : '';
+                optionsHTML += `<option value="${model.id}">${displayName}${recommended}</option>`;
+            });
+
+            modelSelect.innerHTML = optionsHTML;
+
+            // Restore previous selection if it exists
+            if (currentValue && [...modelSelect.options].some(opt => opt.value === currentValue)) {
+                modelSelect.value = currentValue;
+            }
+        }
+
+        addLog('Loaded Ollama models from ollama-models.json', 'success');
+    } catch (error) {
+        addLog(`Error loading Ollama models: ${error.message}`, 'error');
+
+        // Fallback display
+        const modelsListEl = document.getElementById('ollama-models-list');
+        if (modelsListEl) {
+            modelsListEl.innerHTML = '<p style="color: #dc3545;">Error loading models. Check ollama-models.json</p>';
+        }
+    }
+}
+
 // Configuration management
 async function loadConfig() {
     try {
@@ -537,6 +603,7 @@ async function loadConfig() {
         await Promise.all([
             loadClaudeModels(),
             loadGeminiModels(),
+            loadOllamaModels(),
             loadMCPServers()
         ]);
 
@@ -550,6 +617,12 @@ async function loadConfig() {
         document.getElementById('gemini-temp').value = config.geminiConfig.temperature;
         document.getElementById('gemini-tokens').value = config.geminiConfig.maxTokens;
         document.getElementById('gemini-prompt').value = config.geminiConfig.customPrompt || '';
+
+        // Ollama config
+        document.getElementById('ollama-model').value = config.ollamaConfig.model || 'qwen3:8b';
+        document.getElementById('ollama-temp').value = config.ollamaConfig.temperature;
+        document.getElementById('ollama-tokens').value = config.ollamaConfig.maxTokens;
+        document.getElementById('ollama-prompt').value = config.ollamaConfig.customPrompt || '';
 
         addLog('Loaded model configuration from backend', 'success');
     } catch (error) {
@@ -592,19 +665,26 @@ async function saveConfig() {
     // Get custom prompts and only include if not empty
     const claudePrompt = document.getElementById('claude-prompt').value.trim();
     const geminiPrompt = document.getElementById('gemini-prompt').value.trim();
+    const ollamaPrompt = document.getElementById('ollama-prompt').value.trim();
 
     const config = {
         claudeConfig: {
             model: document.getElementById('claude-model').value,
             temperature: parseFloat(document.getElementById('claude-temp').value),
             maxTokens: parseInt(document.getElementById('claude-tokens').value),
-            customPrompt: claudePrompt || undefined, // Only save if not empty
+            customPrompt: claudePrompt || undefined,
         },
         geminiConfig: {
             model: document.getElementById('gemini-model').value,
             temperature: parseFloat(document.getElementById('gemini-temp').value),
             maxTokens: parseInt(document.getElementById('gemini-tokens').value),
-            customPrompt: geminiPrompt || undefined, // Only save if not empty
+            customPrompt: geminiPrompt || undefined,
+        },
+        ollamaConfig: {
+            model: document.getElementById('ollama-model').value,
+            temperature: parseFloat(document.getElementById('ollama-temp').value),
+            maxTokens: parseInt(document.getElementById('ollama-tokens').value),
+            customPrompt: ollamaPrompt || undefined,
         },
     };
 
@@ -740,7 +820,11 @@ function hideExecutionSpinner() {
 
 function displayPlanRealtime(plan) {
     const planSteps = document.getElementById('plan-steps');
-    planSteps.innerHTML = plan.steps.map(step => `
+    planSteps.innerHTML = plan.steps.map(step => {
+        // Format model badge if present
+        const modelBadge = step.model ? `<span class="capability-tag" style="background: #f59e0b; color: white; margin-left: 5px;">${step.model}</span>` : '';
+
+        return `
         <div class="step-item" id="plan-step-${step.step}">
             <div class="step-header-collapsible" onclick="toggleStepDetails(${step.step})" style="cursor: pointer;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -750,6 +834,7 @@ function displayPlanRealtime(plan) {
                     </div>
                     <div>
                         <span class="capability-tag">${step.agent}</span>
+                        ${modelBadge}
                     </div>
                 </div>
             </div>
@@ -760,7 +845,8 @@ function displayPlanRealtime(plan) {
                 </div>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function updateStepStatusRealtime(stepNumber, status, stepData, result) {
@@ -768,6 +854,9 @@ function updateStepStatusRealtime(stepNumber, status, stepData, result) {
     if (!stepEl) return;
 
     const detailsDiv = document.getElementById(`step-details-${stepNumber}`);
+
+    // Format model badge if present
+    const modelBadge = stepData.model ? `<span class="capability-tag" style="background: #f59e0b; color: white; margin-left: 5px;">${stepData.model}</span>` : '';
 
     if (status === 'executing') {
         stepEl.classList.add('active');
@@ -783,6 +872,7 @@ function updateStepStatusRealtime(stepNumber, status, stepData, result) {
                 </div>
                 <div>
                     <span class="capability-tag">${stepData.agent}</span>
+                    ${modelBadge}
                 </div>
             `;
         }
@@ -816,6 +906,7 @@ function updateStepStatusRealtime(stepNumber, status, stepData, result) {
                 </div>
                 <div>
                     <span class="capability-tag">${stepData.agent}</span>
+                    ${modelBadge}
                 </div>
             `;
         }

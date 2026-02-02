@@ -80,6 +80,13 @@ let config = {
     maxTokens: 4096,
     customPrompt: undefined as string | undefined,
   },
+  ollamaConfig: {
+    model: 'llama3.2',
+    temperature: 0.7,
+    maxTokens: 4096,
+    customPrompt: undefined as string | undefined,
+  },
+  ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
 };
 
 let orchestrator: MagenticOrchestrator | null = null;
@@ -98,6 +105,7 @@ interface FileAttachment {
 interface StepExecution {
   stepNumber: number;
   agent: string;
+  model?: string; // Model używany do wykonania kroku
   description: string;
   query: string; // Zapytanie do modelu
   response: string; // Odpowiedź modelu
@@ -167,6 +175,11 @@ async function loadConfigFromFile() {
         ...config.geminiConfig,
         ...savedConfig.geminiConfig,
       },
+      ollamaConfig: {
+        ...config.ollamaConfig,
+        ...savedConfig.ollamaConfig,
+      },
+      ollamaBaseUrl: savedConfig.ollamaBaseUrl || config.ollamaBaseUrl,
     };
 
     console.log('✓ Loaded model configuration from file (API keys from environment/browser)');
@@ -199,6 +212,13 @@ async function saveConfigToFile() {
         maxTokens: config.geminiConfig.maxTokens,
         customPrompt: config.geminiConfig.customPrompt,
       },
+      ollamaConfig: {
+        model: config.ollamaConfig.model,
+        temperature: config.ollamaConfig.temperature,
+        maxTokens: config.ollamaConfig.maxTokens,
+        customPrompt: config.ollamaConfig.customPrompt,
+      },
+      ollamaBaseUrl: config.ollamaBaseUrl,
       savedAt: new Date().toISOString(),
     };
 
@@ -372,6 +392,8 @@ async function initOrchestrator() {
     mcpServers: config.mcpServers,
     claudeConfig: config.claudeConfig,
     geminiConfig: config.geminiConfig,
+    ollamaConfig: config.ollamaConfig,
+    ollamaBaseUrl: config.ollamaBaseUrl,
   });
 
   await orchestrator.initialize();
@@ -488,6 +510,35 @@ app.get('/api/models/gemini', async (req, res) => {
   }
 });
 
+// Get Ollama models from ollama-models.json
+app.get('/api/models/ollama', async (req, res) => {
+  try {
+    const configPath = path.join(process.cwd(), 'ollama-models.json');
+    const data = await fs.readFile(configPath, 'utf-8');
+    const config = JSON.parse(data);
+    res.json({ models: config.models || [], defaultModel: config.defaultModel });
+  } catch (error: any) {
+    console.error('Error loading ollama-models.json:', error);
+    // Return default models if file doesn't exist
+    res.json({
+      models: [
+        {
+          id: 'qwen2.5:7b',
+          name: 'Qwen 2.5 (7B)',
+          description: 'Najlepszy balans jakości i szybkości',
+          recommended: true
+        },
+        {
+          id: 'llama3.2:3b',
+          name: 'Llama 3.2 (3B)',
+          description: 'Bardzo szybki - proste zadania'
+        }
+      ],
+      defaultModel: 'qwen2.5:7b'
+    });
+  }
+});
+
 // Get current configuration
 app.get('/api/config', (req, res) => {
   res.json({
@@ -565,39 +616,60 @@ app.get('/api/agents', (req, res) => {
     return res.status(400).json({ error: 'Orchestrator not initialized' });
   }
 
-  res.json({
-    agents: [
-      {
-        name: 'Manager',
-        capabilities: ['planning', 'orchestration', 'delegation', 'coordination'],
-        description: 'Creates execution plans and orchestrates tasks',
-      },
-      {
-        name: 'Claude',
-        capabilities: [
-          'deep_reasoning',
-          'code_analysis',
-          'code_generation',
-          'complex_problem_solving',
-          'technical_writing',
-        ],
-        description: 'Specialized in deep reasoning and code challenges',
-        tools: orchestrator['claude'].getTools().map((t) => t.name),
-      },
-      {
-        name: 'Gemini',
-        capabilities: [
-          'web_search',
-          'summarization',
-          'information_retrieval',
-          'data_synthesis',
-          'quick_analysis',
-        ],
-        description: 'Specialized in web search and summarization',
-        tools: orchestrator['gemini'].getTools().map((t) => t.name),
-      },
-    ],
-  });
+  const agents = [
+    {
+      name: 'Manager',
+      model: 'claude-3-7-sonnet-20250219 (Opus 4)',
+      capabilities: ['planning', 'orchestration', 'delegation', 'coordination'],
+      description: 'Creates execution plans and orchestrates tasks between agents',
+    },
+    {
+      name: 'Claude',
+      model: config.claudeConfig.model,
+      capabilities: [
+        'deep_reasoning',
+        'code_analysis',
+        'code_generation',
+        'complex_problem_solving',
+        'technical_writing',
+        'pdf_reading',
+      ],
+      description: 'Specialized in deep reasoning, code challenges, and PDF analysis',
+      tools: orchestrator['claude'].getTools().map((t) => t.name),
+    },
+    {
+      name: 'Gemini',
+      model: config.geminiConfig.model,
+      capabilities: [
+        'web_search',
+        'summarization',
+        'information_retrieval',
+        'data_synthesis',
+        'quick_analysis',
+      ],
+      description: 'Specialized in web search and text summarization',
+      tools: orchestrator['gemini'].getTools().map((t) => t.name),
+    },
+  ];
+
+  // Add Ollama if configured
+  if (orchestrator['ollama']) {
+    agents.push({
+      name: 'Ollama',
+      model: config.ollamaConfig.model,
+      capabilities: [
+        'local_inference',
+        'privacy_focused',
+        'offline_capable',
+        'quick_analysis',
+        'cost_free',
+      ],
+      description: 'Local open-source model running offline (free)',
+      tools: orchestrator['ollama'].getTools().map((t) => t.name),
+    });
+  }
+
+  res.json({ agents });
 });
 
 // Upload files
@@ -887,6 +959,7 @@ app.post('/api/execute', async (req, res) => {
       const stepExecution: StepExecution = {
         stepNumber: step.step,
         agent: step.agent,
+        model: step.model, // Model używany do wykonania kroku
         description: step.description,
         query: stepQuery, // Zapytanie do agenta (z plikami jeśli są wymagane)
         response: '',
@@ -928,7 +1001,14 @@ app.post('/api/execute', async (req, res) => {
 
           console.log(`[Server] Step ${step.step}: Found ${stepFiles.length} matching files`);
           if (stepFiles.length > 0) {
-            console.log(`[Server] Step ${step.step}: Will pass ${stepFiles.length} file(s) directly to Claude:`, stepFiles.map(f => f.originalName).join(', '));
+            console.log(`[Server] Step ${step.step}: Will pass ${stepFiles.length} file(s) directly to agent:`, stepFiles.map(f => f.originalName).join(', '));
+
+            // WARNING: Only Claude can receive files directly
+            if (step.agent !== 'claude' && stepFiles.length > 0) {
+              console.warn(`[Server] ⚠️  WARNING: Step ${step.step} assigned to ${step.agent} but has files! Only Claude can read files. Files will be ignored.`);
+              console.warn(`[Server] ⚠️  Manager made an error - ${step.agent} cannot process files: ${stepFiles.map(f => f.originalName).join(', ')}`);
+              stepFiles = []; // Clear files - Ollama/Gemini cannot handle them
+            }
           }
         }
 
@@ -943,6 +1023,9 @@ app.post('/api/execute', async (req, res) => {
             break;
           case 'gemini':
             result = await orchestrator['executeWithGemini'](stepTask, stepFiles.length > 0 ? stepFiles : undefined);
+            break;
+          case 'ollama':
+            result = await orchestrator['executeWithOllama'](stepTask, stepFiles.length > 0 ? stepFiles : undefined);
             break;
           case 'manager':
             result = await orchestrator['executeWithManager'](stepTask);

@@ -1,6 +1,7 @@
 import { ClaudeAgent } from './agents/claude-agent.js';
 import { GeminiAgent } from './agents/gemini-agent.js';
 import { ManagerAgent } from './agents/manager-agent.js';
+import { OllamaAgent } from './agents/ollama-agent.js';
 import {
   Message,
   ToolCall,
@@ -18,16 +19,19 @@ export interface OrchestratorConfig {
   mcpServers?: MCPServerConfig[];
   claudeConfig?: Partial<AgentConfig>;
   geminiConfig?: Partial<AgentConfig>;
+  ollamaConfig?: Partial<AgentConfig>;
+  ollamaBaseUrl?: string;
 }
 
 /**
  * Magentic Orchestrator
- * Coordinates between Manager, Claude, and Gemini agents
+ * Coordinates between Manager, Claude, Gemini, and Ollama agents
  */
 export class MagenticOrchestrator {
   private manager: ManagerAgent;
   private claude: ClaudeAgent;
   private gemini: GeminiAgent;
+  private ollama: OllamaAgent | null = null;
   private conversationHistory: Message[] = [];
   public aborted: boolean = false;
 
@@ -53,6 +57,18 @@ export class MagenticOrchestrator {
       tools: getGeminiTools(),
       ...config.geminiConfig,
     });
+
+    // Initialize Ollama Agent if configured (with MCP support)
+    if (config.ollamaConfig || config.ollamaBaseUrl) {
+      this.ollama = new OllamaAgent(
+        {
+          name: 'Ollama',
+          ...config.ollamaConfig,
+        },
+        config.ollamaBaseUrl,
+        config.mcpServers || []
+      );
+    }
   }
 
   /**
@@ -61,6 +77,12 @@ export class MagenticOrchestrator {
   async initialize(): Promise<void> {
     console.log('[Orchestrator] Initializing...');
     await this.claude.initializeMCP();
+
+    // Initialize Ollama MCP if configured
+    if (this.ollama) {
+      await this.ollama.initializeMCP();
+    }
+
     console.log('[Orchestrator] Initialized successfully');
   }
 
@@ -77,6 +99,12 @@ export class MagenticOrchestrator {
   async cleanup(): Promise<void> {
     console.log('[Orchestrator] Cleaning up...');
     await this.claude.closeMCP();
+
+    // Cleanup Ollama MCP if configured
+    if (this.ollama) {
+      await this.ollama.closeMCP();
+    }
+
     console.log('[Orchestrator] Cleanup complete');
   }
 
@@ -111,15 +139,33 @@ export class MagenticOrchestrator {
     for (const step of plan.steps) {
       console.log(`\n[Orchestrator] Step ${step.step}: ${step.description}`);
       console.log(`[Orchestrator] Agent: ${step.agent}`);
+      if (step.model) {
+        console.log(`[Orchestrator] Model: ${step.model}`);
+      }
 
       let result: string;
 
       switch (step.agent) {
         case 'claude':
+          // Set Claude model if specified in step
+          if (step.model && this.claude) {
+            this.claude.setModel(step.model);
+          }
           result = await this.executeWithClaude(step.description);
           break;
         case 'gemini':
+          // Set Gemini model if specified in step
+          if (step.model && this.gemini) {
+            this.gemini.setModel(step.model);
+          }
           result = await this.executeWithGemini(step.description);
+          break;
+        case 'ollama':
+          // Set Ollama model if specified in step
+          if (step.model && this.ollama) {
+            this.ollama.setModel(step.model);
+          }
+          result = await this.executeWithOllama(step.description);
           break;
         case 'manager':
           result = await this.executeWithManager(step.description);
@@ -363,9 +409,28 @@ export class MagenticOrchestrator {
   }
 
   /**
+   * Execute a task with Ollama agent
+   */
+  async executeWithOllama(task: string, files?: FileAttachment[]): Promise<string> {
+    // Check if Ollama is configured
+    if (!this.ollama) {
+      throw new Error('Ollama agent is not configured. Add ollamaConfig or ollamaBaseUrl to orchestrator config.');
+    }
+
+    // Check for abort at the start
+    if (this.aborted) {
+      throw new Error('Execution aborted by user');
+    }
+
+    const messages: Message[] = [{ role: 'user', content: task, files }];
+    const response = await this.ollama.execute(messages);
+    return response.content;
+  }
+
+  /**
    * Direct chat with a specific agent
    */
-  async chat(message: string, agent: 'claude' | 'gemini' | 'manager' = 'claude'): Promise<string> {
+  async chat(message: string, agent: 'claude' | 'gemini' | 'manager' | 'ollama' = 'claude'): Promise<string> {
     this.conversationHistory.push({ role: 'user', content: message });
 
     let response: string;
@@ -378,6 +443,9 @@ export class MagenticOrchestrator {
         break;
       case 'manager':
         response = await this.executeWithManager(message);
+        break;
+      case 'ollama':
+        response = await this.executeWithOllama(message);
         break;
     }
 
