@@ -271,7 +271,7 @@ export class MagenticOrchestrator {
   private async executeClaudeWithToolHandling(task: string, files?: FileAttachment[]): Promise<string> {
     const messages: Message[] = [{ role: 'user', content: task, files }];
     let toolCallIterations = 0;
-    const MAX_TOOL_ITERATIONS = 10;
+    const MAX_TOOL_ITERATIONS = 20;
 
     while (true) {
       // Check for abort
@@ -281,7 +281,7 @@ export class MagenticOrchestrator {
 
       // Prevent infinite loops
       if (toolCallIterations >= MAX_TOOL_ITERATIONS) {
-        throw new Error(`Maximum tool call iterations (${MAX_TOOL_ITERATIONS}) exceeded`);
+        throw new Error(`Maximum tool call iterations (${MAX_TOOL_ITERATIONS}) exceeded. Task may be too complex or model is stuck in a loop. Try breaking the task into smaller steps.`);
       }
 
       // Debug: Log message structure before calling Claude

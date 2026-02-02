@@ -81,7 +81,7 @@ let config = {
     customPrompt: undefined as string | undefined,
   },
   ollamaConfig: {
-    model: 'llama3.2',
+    model: 'SpeakLeash/bielik-11b-v3.0-instruct:Q6_K',
     temperature: 0.7,
     maxTokens: 4096,
     customPrompt: undefined as string | undefined,
@@ -1076,10 +1076,30 @@ app.post('/api/execute', async (req, res) => {
             sessionId: session.id,
           });
         }
-        throw error; // Re-throw if it's not an abort error
+
+        // For other errors: mark step as failed, broadcast error, but continue with next steps
+        const errorResult = `[BŁĄD] ${error.message}`;
+        results.push(errorResult);
+
+        session.messages.push({
+          role: 'assistant',
+          content: `Krok ${step.step} (${step.agent}): ${step.description}\n\n❌ Błąd:\n${error.message}`,
+          timestamp: new Date().toISOString(),
+        });
+
+        broadcast({
+          type: 'step_complete',
+          step,
+          result: errorResult,
+          stepExecution,
+        });
+
+        // Continue with next steps instead of throwing
+        console.error(`[Server] Step ${step.step} failed: ${error.message}`);
+        continue; // Skip to next step
       }
 
-      // Add step result to session
+      // Add step result to session (only for successful steps)
       session.messages.push({
         role: 'assistant',
         content: `Krok ${step.step} (${step.agent}): ${step.description}\n\nWynik:\n${result}`,
