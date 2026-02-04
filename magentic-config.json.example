@@ -1,0 +1,78 @@
+{
+  "models": [
+    {
+      "id": "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M",
+      "name": "Bielik 11B v3.0 (Q4_K_M)",
+      "description": "Polski model językowy o wysokiej jakości. Najlepszy wybór dla zadań w języku polskim. Doskonały do analizy, rozumowania i pracy z MCP.",
+      "size": "11B parameters (Q4_K_M quantization)",
+      "capabilities": ["reasoning", "coding", "analysis", "mcp_tools", "polish_language"],
+      "recommended": true
+    },
+    {
+      "id": "qwen2.5:14b",
+      "name": "Qwen 2.5 (14B)",
+      "description": "Wysokiej jakości model. Doskonały balans jakości i szybkości.",
+      "size": "14B parameters",
+      "capabilities": ["reasoning", "coding", "analysis", "mcp_tools"],
+      "recommended": false
+    },
+    {
+      "id": "llama3.2:3b",
+      "name": "Llama 3.2 (3B)",
+      "description": "Bardzo szybki, lekki model. Dla prostych pytań i szybkich odpowiedzi.",
+      "size": "3B parameters",
+      "capabilities": ["simple_qa", "basic_analysis"]
+    },
+    {
+      "id": "mistral:7b",
+      "name": "Mistral (7B)",
+      "description": "Silny w rozumowaniu logicznym i analizie. Dobry dla bardziej złożonych zadań.",
+      "size": "7B parameters",
+      "capabilities": ["reasoning", "analysis", "mcp_tools"]
+    }
+  ],
+  "prompts": {
+    "default": {
+      "name": "Prosty Prompt",
+      "description": "Podstawowy prompt bez dodatkowych instrukcji",
+      "prompt": "Jesteś pomocnym asystentem AI działającym lokalnie. Specjalizujesz się w:\n• Szybkiej analizie i przetwarzaniu informacji\n• Odpowiadaniu na pytania w oparciu o dostarczone dane\n• Pracujesz offline i chronisz prywatność użytkownika\n\nMAŻ DOSTĘP DO NARZĘDZI MCP. Gdy potrzebujesz wykonać operację, MUSISZ użyć narzędzi.\n\nFORMAT WYWOŁANIA NARZĘDZI:\n```json\n{\n  \"tool_calls\": [\n    {\n      \"id\": \"call_1\",\n      \"name\": \"nazwa_narzędzia\",\n      \"input\": { \"parametr1\": \"wartość1\" }\n    }\n  ]\n}\n```\n\nNIE GENERUJ PRZYKŁADOWYCH WYNIKÓW! Użyj narzędzia i poczekaj na prawdziwy wynik."
+    },
+    "custom": {
+      "name": "Własny Prompt",
+      "description": "Edytuj ten prompt aby dostosować zachowanie modelu",
+      "prompt": ""
+    }
+  },
+  "claudeConfig": {
+    "model": "claude-sonnet-4-5-20250929",
+    "temperature": 1,
+    "maxTokens": 4096
+  },
+  "geminiConfig": {
+    "model": "gemini-2.5-flash",
+    "temperature": 1,
+    "maxTokens": 4096
+  },
+  "ollamaConfig": {
+    "model": "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M",
+    "temperature": 0.7,
+    "maxTokens": 4096
+  },
+  "ollamaBaseUrl": "http://localhost:11434",
+  "notes": [
+    "=== MODELE ===",
+    "Modele muszą być pobrane lokalnie: ollama pull <model_name>",
+    "Dla Bielik: ollama pull SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M",
+    "Większe modele (>8B) wymagają więcej RAM (Bielik 11B: ~8GB RAM)",
+    "Wszystkie modele z 'mcp_tools' mogą używać narzędzi MCP",
+    "",
+    "=== PROMPTY ===",
+    "Prompt 'default' jest automatycznie ładowany przy starcie serwera",
+    "Możesz dodawać własne prompty edytując ten plik",
+    "Użyj UI (Config → Ollama) aby zarządzać promptami",
+    "",
+    "=== KONFIGURACJA ===",
+    "Ten plik zawiera wszystkie ustawienia aplikacji Magentic Agent",
+    "Edytuj bezpośrednio lub użyj UI: http://localhost:3000 → Config"
+  ]
+}

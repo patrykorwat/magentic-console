@@ -913,11 +913,36 @@ function updateStepStatusRealtime(stepNumber, status, stepData, result) {
 
         // Update details with query and response
         if (detailsDiv) {
+            let toolCallsHtml = '';
+            if (stepData.toolCalls && stepData.toolCalls.length > 0) {
+                toolCallsHtml = `
+                    <div style="padding: 10px; background: #fff3cd; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #ffc107;">
+                        <strong style="color: #856404;">🛠️ Wywołania narzędzi (${stepData.toolCalls.length}):</strong>
+                        ${stepData.toolCalls.map((tc, idx) => `
+                            <div style="margin-top: 8px; padding: 8px; background: white; border-radius: 4px; border: 1px solid #ffc107;">
+                                <div style="font-weight: bold; color: #856404;">${idx + 1}. ${tc.name}</div>
+                                <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                                    <strong>Input:</strong>
+                                    <pre style="margin: 4px 0; padding: 6px; background: #f8f9fa; border-radius: 3px; overflow-x: auto; font-size: 11px;">${JSON.stringify(tc.input, null, 2)}</pre>
+                                </div>
+                                ${tc.result ? `
+                                <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                                    <strong>Result:</strong>
+                                    <pre style="margin: 4px 0; padding: 6px; background: #e7f5ff; border-radius: 3px; overflow-x: auto; font-size: 11px;">${JSON.stringify(tc.result, null, 2)}</pre>
+                                </div>
+                                ` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
             detailsDiv.innerHTML = `
                 <div style="padding: 10px; background: #f8f9fa; border-radius: 6px; margin-bottom: 8px;">
                     <strong style="color: #667eea;">📤 Zapytanie do agenta:</strong>
                     <div style="margin-top: 6px; font-family: monospace; font-size: 13px;">${escapeHtml(stepData.description)}</div>
                 </div>
+                ${toolCallsHtml}
                 <div style="padding: 12px; background: white; border-radius: 6px; border-left: 3px solid #28a745;">
                     <strong style="color: #28a745;">📥 Odpowiedź agenta:</strong>
                     <div class="output-text" style="margin-top: 8px; white-space: pre-wrap;">${escapeHtml(result)}</div>
@@ -1090,6 +1115,131 @@ function exportResult(format) {
     addLog(`Wyeksportowano wynik jako ${filename}`, 'success');
 }
 
+// Ollama Prompts Management
+let ollamaPrompts = {};
+let currentPromptKey = null;
+
+// Load available Ollama prompts
+async function loadOllamaPrompts() {
+    try {
+        const response = await fetch('/api/ollama/prompts');
+        ollamaPrompts = await response.json();
+
+        // Populate selector
+        const selector = document.getElementById('ollama-prompt-selector');
+        selector.innerHTML = '';
+
+        Object.keys(ollamaPrompts).forEach(key => {
+            const prompt = ollamaPrompts[key];
+            const option = document.createElement('option');
+            option.value = key;
+            option.textContent = `${prompt.name} - ${prompt.description}`;
+            selector.appendChild(option);
+        });
+
+        // Select default by default
+        selector.value = 'default';
+        currentPromptKey = 'default';
+
+        addLog('Loaded Ollama prompt templates', 'success');
+    } catch (error) {
+        addLog(`Error loading Ollama prompts: ${error.message}`, 'error');
+    }
+}
+
+// Load selected prompt into textarea
+function loadSelectedPrompt() {
+    const selector = document.getElementById('ollama-prompt-selector');
+    const key = selector.value;
+
+    if (ollamaPrompts[key]) {
+        document.getElementById('ollama-prompt').value = ollamaPrompts[key].prompt;
+        currentPromptKey = key;
+        addLog(`Loaded prompt: ${ollamaPrompts[key].name}`, 'success');
+    }
+}
+
+// Save current prompt to magentic-config.json
+async function savePromptToFile() {
+    const selector = document.getElementById('ollama-prompt-selector');
+    const key = selector.value;
+    const promptText = document.getElementById('ollama-prompt').value;
+
+    if (!key) {
+        alert('Please select a prompt template first');
+        return;
+    }
+
+    // Update the prompt in memory
+    if (ollamaPrompts[key]) {
+        ollamaPrompts[key].prompt = promptText;
+    }
+
+    try {
+        const response = await fetch('/api/ollama/prompts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(ollamaPrompts)
+        });
+
+        const result = await response.json();
+        addLog(`Saved prompt "${ollamaPrompts[key].name}" to magentic-config.json`, 'success');
+        alert(`Prompt saved to magentic-config.json!\n\nTemplate: ${ollamaPrompts[key].name}`);
+    } catch (error) {
+        addLog(`Error saving prompt: ${error.message}`, 'error');
+        alert(`Error saving prompt: ${error.message}`);
+    }
+}
+
+// Set active prompt (will be used for next execution)
+async function setActivePrompt() {
+    const selector = document.getElementById('ollama-prompt-selector');
+    const key = selector.value;
+
+    if (!key || !ollamaPrompts[key]) {
+        alert('Please select a prompt template first');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/ollama/set-prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ promptKey: key })
+        });
+
+        const result = await response.json();
+        addLog(`Active prompt set to: ${result.promptName}`, 'success');
+        alert(`Active prompt set successfully!\n\nPrompt: ${result.promptName}\n\nThis prompt will be used for Ollama/Bielik executions.`);
+    } catch (error) {
+        addLog(`Error setting active prompt: ${error.message}`, 'error');
+        alert(`Error: ${error.message}`);
+    }
+}
+
+// Manage prompts (show info)
+function managePrompts() {
+    const info = `Zarządzanie Promptami Ollama
+
+Masz 3 opcje:
+
+1. 📋 Load Prompt - Wczytaj wybrany szablon do edycji
+2. 💾 Save to magentic-config.json - Zapisz edytowany prompt z powrotem do pliku
+3. ✅ Set as Active Prompt - Ustaw wybrany prompt jako aktywny dla Bielika
+
+Pliki:
+• magentic-config.json - Twoje szablony promptów
+• magentic-config.json.example - Przykładowe prompty
+
+Szablony domyślne:
+• default - Podstawowy prompt bez dodatkowych instrukcji
+• custom - Pusty szablon do własnych promptów
+
+Edytuj magentic-config.json aby dodać więcej szablonów!`;
+
+    alert(info);
+}
+
 // Initialize application
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize WebSocket
@@ -1097,4 +1247,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Load initial data
     addLog('Application initialized', 'success');
+
+    // Load Ollama prompts when config tab is opened
+    const configTab = document.querySelector('[onclick*="config"]');
+    if (configTab) {
+        configTab.addEventListener('click', () => {
+            setTimeout(loadOllamaPrompts, 100);
+        });
+    }
 });

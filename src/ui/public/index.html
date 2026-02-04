@@ -636,12 +636,32 @@ MCP_SERVERS='[{"name":"filesystem","command":"npx","args":["-y","@modelcontextpr
                     <input type="number" id="ollama-tokens" value="4096">
                 </div>
                 <div class="form-group">
-                    <label>Custom System Prompt <small style="color: #666;">(Optional - overrides default)</small></label>
-                    <textarea id="ollama-prompt" rows="8" style="width: 100%; padding: 10px; font-family: monospace; font-size: 13px; border: 1px solid #ddd; border-radius: 4px;" placeholder="Leave empty to use default prompt..."></textarea>
+                    <label>System Prompt Templates</label>
+                    <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+                        <select id="ollama-prompt-selector" style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                            <option value="">Loading prompts...</option>
+                        </select>
+                        <button class="btn btn-secondary" onclick="loadSelectedPrompt()" style="padding: 8px 16px;">
+                            📋 Load Prompt
+                        </button>
+                        <button class="btn btn-secondary" onclick="managePrompts()" style="padding: 8px 16px;">
+                            ⚙️ Manage
+                        </button>
+                    </div>
+                    <label>Custom System Prompt <small style="color: #666;">(Edit and save to magentic-config.json)</small></label>
+                    <textarea id="ollama-prompt" rows="10" style="width: 100%; padding: 10px; font-family: monospace; font-size: 13px; border: 1px solid #ddd; border-radius: 4px;" placeholder="Leave empty to use default prompt..."></textarea>
+                    <div style="margin-top: 5px; display: flex; gap: 10px;">
+                        <button class="btn btn-secondary" onclick="savePromptToFile()" style="flex: 1; padding: 8px;">
+                            💾 Save to magentic-config.json
+                        </button>
+                        <button class="btn btn-secondary" onclick="setActivePrompt()" style="flex: 1; padding: 8px;">
+                            ✅ Set as Active Prompt
+                        </button>
+                    </div>
                 </div>
 
                 <div style="margin-top: 15px; padding: 10px; background: #e7f3ff; border-radius: 4px; font-size: 13px;">
-                    <strong>💡 Tip:</strong> Edit <code>ollama-models.json</code> to customize available models and their descriptions for the Manager agent.
+                    <strong>💡 Tip:</strong> Edit <code>magentic-config.json</code> to manage multiple prompt templates. The 'default' prompt is loaded automatically on startup.
                 </div>
             </div>
 

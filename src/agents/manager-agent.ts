@@ -45,7 +45,7 @@ Dostępni agenci:
 
 2. Agent Gemini - Specjalizuje się w wyszukiwaniu w internecie, syntezie informacji TEKSTOWYCH, szybkiej analizie i podsumowywaniu tekstu. NIE MOŻE czytać plików PDF bezpośrednio. PŁATNY ($). Używaj do: podsumowywania TEKSTU (nie plików!), syntezy informacji z poprzednich kroków, wyszukiwania informacji.
 
-3. Agent Ollama - Lokalny model open-source działający OFFLINE. DARMOWY, ale słabszy od Claude/Gemini. Ma dostęp do narzędzi MCP (jak Claude). Używaj do: prostych pytań/odpowiedzi, podstawowej analizy tekstu, zadań z bazą danych przez MCP (gdy model wystarczy), zadań nie wymagających zaawansowanego rozumowania, gdy prywatność jest priorytetem lub gdy brak internetu.
+3. Agent Ollama - Lokalny model open-source działający OFFLINE. DARMOWY, ale słabszy od Claude/Gemini. MA PEŁNY DOSTĘP DO NARZĘDZI MCP (tak jak Claude) - może operować na bazach danych itp. Używaj do: prostych pytań/odpowiedzi, podstawowej analizy tekstu, PROSTYCH I ŚREDNIO ZŁOŻONYCH zadań z bazą danych przez MCP (Bielik jest wystarczająco inteligentny!), zadań nie wymagających najwyższego poziomu rozumowania, gdy prywatność jest priorytetem lub gdy chcesz zaoszczędzić pieniądze (DARMOWY!).
 
 WAŻNE ZASADY WYBORU AGENTA I MODELU:
 - Jeśli zadanie wymaga CZYTANIA/ANALIZY PLIKÓW PDF → ZAWSZE wybierz Claude (tylko Claude obsługuje PDF)
@@ -53,9 +53,9 @@ WAŻNE ZASADY WYBORU AGENTA I MODELU:
   * Głęboka analiza zawartości PDF, wyciąganie wniosków → Sonnet (drogi)
   * Ekstremalnie trudna analiza, gdy Sonnet nie wystarcza → Opus (bardzo drogi, ostateczność!)
 - Jeśli zadanie wymaga OPERACJI Z BAZĄ DANYCH przez MCP → wybierz Claude LUB Ollama (oba mają MCP)
-  * Bardzo proste zapytania (odczyt pojedynczych rekordów) → Ollama (darmowy!)
-  * Średnio złożone zapytania (podstawowe filtry, proste agregacje) → Haiku (tani)
-  * Złożone zapytania (wieloetapowe, agregacje, analiza) → Sonnet (drogi)
+  * Bardzo proste zapytania (odczyt pojedynczych rekordów, proste filtry) → Ollama Bielik (darmowy!)
+  * Średnio złożone zapytania (złączone tabele, agregacje, analiza schematu) → Ollama Bielik LUB Haiku (Bielik radzi sobie dobrze i jest darmowy!)
+  * Złożone zapytania wieloetapowe wymagające głębokiej analizy → Sonnet (drogi, ale potężny)
   * Najwyższa złożoność (gdy Sonnet nie radzi sobie) → Opus (bardzo drogi, ostateczność!)
 - Jeśli zadanie wymaga PROSTEJ analizy tekstu BEZ złożonego rozumowania → użyj Ollama (darmowy, lokalny)
 - Jeśli zadanie wymaga podsumowania TEKSTU z poprzednich kroków → użyj Gemini lub Ollama (tanie opcje)
@@ -81,11 +81,17 @@ Podczas tworzenia planu:
 - Oszacuj złożoność (low, medium, high)
 
 WAŻNE - LIMITY WYNIKÓW NARZĘDZI MCP:
-- Gdy Claude/Ollama używa narzędzi MCP (bazy danych), wyniki są automatycznie skracane do 10,000 znaków aby nie przekroczyć limitu kontekstu
+- Gdy Claude/Ollama (Bielik) używa narzędzi MCP (bazy danych), wyniki są automatycznie skracane do 10,000 znaków aby nie przekroczyć limitu kontekstu
 - W opisie zadania dla Claude/Ollama ZAWSZE dodaj instrukcję: "Używaj precyzyjnych zapytań z filtrami (WHERE, LIMIT). Pobieraj tylko niezbędne dane, nie całą bazę."
 - Jeśli zadanie wymaga analizy dużej ilości danych, podziel je na mniejsze kroki z konkretnymi filtrami/limitami
 - Przykład DOBRY: "Znajdź top 10 rekordów spełniających warunek X (użyj WHERE, ORDER BY, LIMIT 10)"
 - Przykład ZŁY: "Pobierz wszystkie rekordy z bazy" (może zwrócić tysiące rekordów i przekroczyć limit kontekstu)
+
+BIELIK I MCP:
+- Bielik (SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M) MA PEŁNE WSPARCIE dla tool calling i MCP
+- Może wykonywać zapytania do baz danych przez MCP
+- Jest wystarczająco inteligentny do większości operacji bazodanowych (analiza schematu, zapytania, agregacje)
+- Preferuj Bielika dla zadań MCP gdy tylko jest to możliwe - jest DARMOWY i działa lokalnie!
 
 Jeśli w zadaniu znajdują się załączone pliki, przeanalizuj które pliki są potrzebne w którym kroku i przypisz je używając pola "requiredFiles" (lista nazw plików).
 
@@ -97,8 +103,8 @@ Zwróć plan w formacie JSON:
       "step": 1,
       "description": "Co należy zrobić",
       "agent": "claude|gemini|ollama|manager",
-      "model": "claude-haiku-4-5-20251001|claude-sonnet-4-5-20250929|claude-opus-4-5-20251101|qwen3:8b", // OPCJONALNE - dla Claude/Ollama, wybierz mądrze ze względu na koszty!
-      "reasoning": "Dlaczego ten agent i model są najlepiej dopasowane - PO POLSKU (wyjaśnij wybór: Ollama dla prostych zadań, Gemini/Haiku dla średnich, Sonnet dla złożonych, Opus TYLKO dla ekstremalnie trudnych)",
+      "model": "claude-haiku-4-5-20251001|claude-sonnet-4-5-20250929|claude-opus-4-5-20251101|SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M|qwen3:8b", // OPCJONALNE - dla Claude/Ollama
+      "reasoning": "Dlaczego ten agent i model są najlepiej dopasowane - PO POLSKU (wyjaśnij wybór: Bielik/Ollama dla prostych/średnich zadań MCP DARMOWE, Gemini/Haiku dla średnich $, Sonnet dla złożonych $$, Opus TYLKO dla ekstremalnie trudnych $$$)",
       "requiredFiles": ["nazwa_pliku.pdf"] // OPCJONALNE - tylko jeśli krok wymaga konkretnych plików (tylko Claude!)
     }
   ],
@@ -154,10 +160,15 @@ Zwróć plan w formacie JSON:
       console.log('[ManagerAgent] Fetching available models from API...');
 
       // Use direct fetch since SDK version doesn't have models.list()
+      const apiKey = this.client.apiKey;
+      if (!apiKey) {
+        throw new Error('API key is not available');
+      }
+
       const response = await fetch('https://api.anthropic.com/v1/models', {
         method: 'GET',
         headers: {
-          'x-api-key': this.client.apiKey,
+          'x-api-key': apiKey,
           'anthropic-version': '2023-06-01',
         },
       });
@@ -166,8 +177,8 @@ Zwróć plan w formacie JSON:
         throw new Error(`API returned ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json();
-      this.availableModels = data.data as ClaudeModel[];
+      const data = await response.json() as { data: ClaudeModel[] };
+      this.availableModels = data.data;
       this.modelsLastFetched = now;
 
       console.log(`[ManagerAgent] Fetched ${this.availableModels.length} models from API`);
@@ -278,7 +289,7 @@ Podczas tworzenia planu:
 - Oszacuj złożoność (low, medium, high)
 
 WAŻNE - LIMITY WYNIKÓW NARZĘDZI MCP:
-- Gdy Claude/Ollama używa narzędzi MCP (Neo4j, inne bazy danych), wyniki są automatycznie skracane do 10,000 znaków aby nie przekroczyć limitu kontekstu
+- Gdy Claude/Ollama używa narzędzi MCP (bazy danych), wyniki są automatycznie skracane do 10,000 znaków aby nie przekroczyć limitu kontekstu
 - W opisie zadania dla Claude/Ollama ZAWSZE dodaj instrukcję: "Używaj precyzyjnych zapytań z filtrami (WHERE, LIMIT). Pobieraj tylko niezbędne dane, nie całą bazę."
 - Jeśli zadanie wymaga analizy dużej ilości danych, podziel je na mniejsze kroki z konkretnymi filtrami/limitami
 - Przykład DOBRY: "Znajdź top 10 rekordów spełniających warunek X (użyj WHERE, ORDER BY, LIMIT 10)"

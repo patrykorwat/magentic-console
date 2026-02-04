@@ -15,6 +15,7 @@ const __dirname = path.dirname(__filename);
 
 // Config and chat history paths
 const CONFIG_FILE = path.join(process.cwd(), 'magentic-config.json');
+const CONFIG_EXAMPLE = path.join(process.cwd(), 'magentic-config.json.example');
 const CHAT_HISTORY_DIR = path.join(process.cwd(), 'chat-history');
 const EXECUTIONS_DIR = path.join(process.cwd(), 'executions');
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
@@ -63,6 +64,50 @@ try {
   console.log('[Server] No MCP servers configured. Add them in .env file.');
 }
 
+// Load Ollama config (models + prompts) from file
+async function loadMagenticConfig(): Promise<any> {
+  try {
+    const content = await fs.readFile(CONFIG_FILE, 'utf-8');
+    return JSON.parse(content);
+  } catch (error) {
+    console.log('[Server] magentic-config.json not found, using example file');
+    try {
+      const exampleContent = await fs.readFile(CONFIG_EXAMPLE, 'utf-8');
+      return JSON.parse(exampleContent);
+    } catch (err) {
+      console.log('[Server] No Ollama config file found, using defaults');
+      return {
+        models: [],
+        prompts: {
+          default: {
+            name: 'Domyślny',
+            description: 'Podstawowy prompt',
+            prompt: 'Jesteś pomocnym asystentem AI.'
+          }
+        }
+      };
+    }
+  }
+}
+
+// Load just prompts from config
+async function loadOllamaPrompts(): Promise<Record<string, any>> {
+  const config = await loadMagenticConfig();
+  return config.prompts || {};
+}
+
+// Save Ollama config (preserving models, updating prompts)
+async function saveMagenticConfig(updates: Partial<any>): Promise<void> {
+  const currentConfig = await loadMagenticConfig();
+  const newConfig = { ...currentConfig, ...updates };
+  await fs.writeFile(CONFIG_FILE, JSON.stringify(newConfig, null, 2), 'utf-8');
+}
+
+// Save just prompts to config
+async function saveOllamaPrompts(prompts: Record<string, any>): Promise<void> {
+  await saveMagenticConfig({ prompts });
+}
+
 // Store configuration and orchestrator
 let config = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
@@ -109,6 +154,12 @@ interface StepExecution {
   description: string;
   query: string; // Zapytanie do modelu
   response: string; // Odpowiedź modelu
+  toolCalls?: Array<{
+    id: string;
+    name: string;
+    input: Record<string, any>;
+    result?: any;
+  }>; // Tool calls wykonane podczas tego kroku
   status: 'executing' | 'completed' | 'error' | 'aborted';
   error?: string;
   startedAt: string;
@@ -153,53 +204,49 @@ function broadcast(message: any) {
   });
 }
 
-// Load configuration from file (only model configs, API keys stay in env/browser)
+// Load configuration from magentic-config.json (only model configs, API keys stay in env/browser)
 async function loadConfigFromFile() {
   try {
-    const data = await fs.readFile(CONFIG_FILE, 'utf-8');
-    const savedConfig = JSON.parse(data);
+    const ollamaConfig = await loadMagenticConfig();
 
-    // Preserve existing MCP servers from initial config
-    const existingMcpServers = config.mcpServers;
-
-    // Only load model configurations (including custom prompts), keep API keys from env
-    config = {
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-      googleApiKey: process.env.GOOGLE_API_KEY || '',
-      mcpServers: existingMcpServers, // Preserve MCP servers from initial config
-      claudeConfig: {
-        ...config.claudeConfig,
-        ...savedConfig.claudeConfig,
-      },
-      geminiConfig: {
-        ...config.geminiConfig,
-        ...savedConfig.geminiConfig,
-      },
-      ollamaConfig: {
+    // Update in-memory config with settings from magentic-config.json
+    if (ollamaConfig.ollamaConfig) {
+      config.ollamaConfig = {
         ...config.ollamaConfig,
-        ...savedConfig.ollamaConfig,
-      },
-      ollamaBaseUrl: savedConfig.ollamaBaseUrl || config.ollamaBaseUrl,
-    };
-
-    console.log('✓ Loaded model configuration from file (API keys from environment/browser)');
-    if (config.claudeConfig.customPrompt || config.geminiConfig.customPrompt) {
-      console.log('✓ Custom prompts loaded');
+        ...ollamaConfig.ollamaConfig,
+      };
     }
+
+    if (ollamaConfig.claudeConfig) {
+      config.claudeConfig = {
+        ...config.claudeConfig,
+        ...ollamaConfig.claudeConfig,
+      };
+    }
+
+    if (ollamaConfig.geminiConfig) {
+      config.geminiConfig = {
+        ...config.geminiConfig,
+        ...ollamaConfig.geminiConfig,
+      };
+    }
+
+    if (ollamaConfig.ollamaBaseUrl) {
+      config.ollamaBaseUrl = ollamaConfig.ollamaBaseUrl;
+    }
+
+    console.log('✓ Loaded model configuration from magentic-config.json');
     return true;
   } catch (error) {
-    // File doesn't exist or is invalid - use defaults
     console.log('No saved configuration found, using defaults');
     return false;
   }
 }
 
-// Save configuration to file (only model configs including custom prompts, not API keys or MCP servers)
+// Save configuration to magentic-config.json (preserving models and prompts)
 async function saveConfigToFile() {
   try {
     const configToSave = {
-      // Never save API keys or MCP servers - keep them in browser only
-      // Save model configs including custom prompts
       claudeConfig: {
         model: config.claudeConfig.model,
         temperature: config.claudeConfig.temperature,
@@ -222,11 +269,8 @@ async function saveConfigToFile() {
       savedAt: new Date().toISOString(),
     };
 
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(configToSave, null, 2), 'utf-8');
-    console.log('✓ Model configuration saved to file');
-    if (config.claudeConfig.customPrompt || config.geminiConfig.customPrompt) {
-      console.log('✓ Custom prompts saved');
-    }
+    await saveMagenticConfig(configToSave);
+    console.log('✓ Model configuration saved to magentic-config.json');
     return true;
   } catch (error) {
     console.error('Failed to save configuration:', error);
@@ -386,6 +430,20 @@ async function initOrchestrator() {
     await orchestrator.cleanup();
   }
 
+  // Load Ollama prompt if not already set
+  if (!config.ollamaConfig.customPrompt) {
+    try {
+      const prompts = await loadOllamaPrompts();
+      // Use 'default' prompt by default
+      if (prompts.default && prompts.default.prompt) {
+        config.ollamaConfig.customPrompt = prompts.default.prompt;
+        console.log('[Server] Loaded default Ollama prompt from config file');
+      }
+    } catch (error) {
+      console.log('[Server] Could not load Ollama prompts, using built-in default');
+    }
+  }
+
   orchestrator = new MagenticOrchestrator({
     anthropicApiKey: config.anthropicApiKey,
     googleApiKey: config.googleApiKey,
@@ -510,15 +568,13 @@ app.get('/api/models/gemini', async (req, res) => {
   }
 });
 
-// Get Ollama models from ollama-models.json
+// Get Ollama models from magentic-config.json
 app.get('/api/models/ollama', async (req, res) => {
   try {
-    const configPath = path.join(process.cwd(), 'ollama-models.json');
-    const data = await fs.readFile(configPath, 'utf-8');
-    const config = JSON.parse(data);
-    res.json({ models: config.models || [], defaultModel: config.defaultModel });
+    const ollamaConfig = await loadMagenticConfig();
+    res.json({ models: ollamaConfig.models || [], defaultModel: ollamaConfig.defaultModel });
   } catch (error: any) {
-    console.error('Error loading ollama-models.json:', error);
+    console.error('Error loading magentic-config.json:', error);
     // Return default models if file doesn't exist
     res.json({
       models: [
@@ -597,6 +653,9 @@ app.post('/api/config', async (req, res) => {
     if (updates.geminiConfig) {
       config.geminiConfig = { ...config.geminiConfig, ...updates.geminiConfig };
     }
+    if (updates.ollamaConfig) {
+      config.ollamaConfig = { ...config.ollamaConfig, ...updates.ollamaConfig };
+    }
 
     // Save model configuration to file
     await saveConfigToFile();
@@ -606,6 +665,56 @@ app.post('/api/config', async (req, res) => {
 
     res.json({ success: true, message: 'Model configuration updated' });
   } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Ollama prompts
+app.get('/api/ollama/prompts', async (_req, res) => {
+  try {
+    const prompts = await loadOllamaPrompts();
+    res.json(prompts);
+  } catch (error: any) {
+    console.error('[Server] Error loading Ollama prompts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Save Ollama prompts
+app.post('/api/ollama/prompts', async (req, res) => {
+  try {
+    const prompts = req.body;
+    await saveOllamaPrompts(prompts);
+    res.json({ success: true, message: 'Prompts saved successfully' });
+  } catch (error: any) {
+    console.error('[Server] Error saving Ollama prompts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Set active Ollama prompt
+app.post('/api/ollama/set-prompt', async (req, res) => {
+  try {
+    const { promptKey } = req.body;
+    const prompts = await loadOllamaPrompts();
+
+    if (!prompts[promptKey]) {
+      return res.status(400).json({ error: 'Prompt not found' });
+    }
+
+    // Update config with selected prompt
+    config.ollamaConfig.customPrompt = prompts[promptKey].prompt;
+
+    // Reinitialize orchestrator
+    await initOrchestrator();
+
+    res.json({
+      success: true,
+      message: `Active prompt set to: ${prompts[promptKey].name}`,
+      promptName: prompts[promptKey].name
+    });
+  } catch (error: any) {
+    console.error('[Server] Error setting Ollama prompt:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1036,8 +1145,12 @@ app.post('/api/execute', async (req, res) => {
 
         results.push(result);
 
-        // Update step execution with result
+        // Get tool calls from orchestrator
+        const toolCalls = orchestrator.getAndClearStepToolCalls();
+
+        // Update step execution with result and tool calls
         stepExecution.response = result;
+        stepExecution.toolCalls = toolCalls.length > 0 ? toolCalls : undefined;
         stepExecution.status = 'completed';
         stepExecution.completedAt = new Date().toISOString();
 

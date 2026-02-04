@@ -167,7 +167,7 @@ export class ClaudeAgent implements Agent {
   /**
    * Convert file attachment to Claude API document format
    */
-  private fileToDocumentBlock(file: FileAttachment): Anthropic.DocumentBlockParam {
+  private fileToDocumentBlock(file: FileAttachment): any {
     const fileData = readFileSync(file.path);
     const base64Data = fileData.toString('base64');
 
@@ -191,7 +191,7 @@ export class ClaudeAgent implements Agent {
     const anthropicMessages: Anthropic.MessageParam[] = messages.map((msg) => {
       // If message has files, create content blocks array
       if (msg.files && msg.files.length > 0) {
-        const contentBlocks: (Anthropic.TextBlockParam | Anthropic.DocumentBlockParam)[] = [];
+        const contentBlocks: (Anthropic.TextBlockParam | any)[] = [];
 
         // Add text content first if it exists and is a string
         if (typeof msg.content === 'string' && msg.content.trim()) {

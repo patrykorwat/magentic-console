@@ -5,7 +5,7 @@ dist/
 *.log
 .DS_Store
 coverage/
-magentic-config.json
 chat-history/
 executions/
 uploads/
+magentic-config.json

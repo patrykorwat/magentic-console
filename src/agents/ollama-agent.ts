@@ -6,6 +6,7 @@ import {
   AgentResponse,
   Message,
   Tool,
+  ToolCall,
   ToolResult,
   FileAttachment,
   MCPServerConfig,
@@ -37,14 +38,16 @@ export class OllamaAgent implements Agent {
     this.baseUrl = baseUrl || 'http://localhost:11434';
     this.model = config.model || 'llama3.2';
 
-    // Default system prompt - local AI assistant with MCP support
+    // System prompt is now loaded from config/ollama-prompts.json via customPrompt
+    // Default fallback prompt if no customPrompt provided
     const defaultPrompt =
-      'Jesteś pomocnym asystentem AI działającym lokalnie. Specjalizujesz się w:' +
-      '\n• Szybkiej analizie i przetwarzaniu informacji' +
-      '\n• Odpowiadaniu na pytania w oparciu o dostarczone dane' +
-      '\n• Pracujesz offline i chronisz prywatność użytkownika' +
-      '\n\nJeśli masz dostęp do narzędzi MCP, używaj ich aktywnie do wykonywania zadań. ' +
-      'Zawsze dostarczaj zwięzłe, konkretne odpowiedzi oparte na faktach i dostępnych danych.';
+      'Jesteś pomocnym asystentem AI działającym lokalnie.' +
+      '\n\nMAŻ DOSTĘP DO NARZĘDZI MCP. Gdy potrzebujesz wykonać operację, MUSISZ użyć narzędzi.' +
+      '\n\nFORMAT WYWOŁANIA NARZĘDZI:' +
+      '\n```json' +
+      '\n{"tool_calls": [{"id": "call_1", "name": "nazwa_narzędzia", "input": {...}}]}' +
+      '\n```' +
+      '\n\nNIE GENERUJ PRZYKŁADOWYCH WYNIKÓW! Użyj narzędzia i poczekaj na prawdziwy wynik.';
 
     // Use custom prompt if provided, otherwise use systemPrompt or default
     this.systemPrompt = config.customPrompt || config.systemPrompt || defaultPrompt;
@@ -136,6 +139,80 @@ export class OllamaAgent implements Agent {
     return [...this.tools, ...this.mcpTools];
   }
 
+  /**
+   * Parse tool calls from Ollama response content
+   * Looks for JSON blocks with tool_calls array
+   */
+  private parseToolCalls(content: string): ToolCall[] {
+    const toolCalls: ToolCall[] = [];
+
+    // Try to find JSON code blocks with tool_calls
+    const jsonBlockRegex = /```json\s*\n([\s\S]*?)\n```/g;
+    let match;
+
+    while ((match = jsonBlockRegex.exec(content)) !== null) {
+      try {
+        const jsonContent = match[1];
+        const parsed = JSON.parse(jsonContent);
+
+        // Format 1: {"tool_calls": [{...}]}
+        if (parsed.tool_calls && Array.isArray(parsed.tool_calls)) {
+          for (const call of parsed.tool_calls) {
+            if (call.name && call.input) {
+              toolCalls.push({
+                id: call.id || `call_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+                name: call.name,
+                input: call.input
+              });
+            }
+          }
+        }
+        // Format 2: Single tool call object {"name": "...", "parameters"/"input": {...}}
+        else if (parsed.name && (parsed.parameters || parsed.input)) {
+          toolCalls.push({
+            id: parsed.id || `call_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+            name: parsed.name,
+            input: parsed.parameters || parsed.input
+          });
+        }
+      } catch (error) {
+        console.warn('[OllamaAgent] Failed to parse JSON block:', error);
+      }
+    }
+
+    // Also try to parse the entire content as JSON if no code blocks found
+    if (toolCalls.length === 0) {
+      try {
+        const parsed = JSON.parse(content.trim());
+
+        // Format 1: {"tool_calls": [{...}]}
+        if (parsed.tool_calls && Array.isArray(parsed.tool_calls)) {
+          for (const call of parsed.tool_calls) {
+            if (call.name && call.input) {
+              toolCalls.push({
+                id: call.id || `call_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+                name: call.name,
+                input: call.input
+              });
+            }
+          }
+        }
+        // Format 2: Single tool call object {"name": "...", "parameters"/"input": {...}}
+        else if (parsed.name && (parsed.parameters || parsed.input)) {
+          toolCalls.push({
+            id: parsed.id || `call_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+            name: parsed.name,
+            input: parsed.parameters || parsed.input
+          });
+        }
+      } catch (error) {
+        // Content is not JSON, that's fine - no tool calls
+      }
+    }
+
+    return toolCalls;
+  }
+
   async execute(messages: Message[]): Promise<AgentResponse> {
     return this.executeWithTools(messages, []);
   }
@@ -163,9 +240,29 @@ export class OllamaAgent implements Agent {
         };
       });
 
+      // Build system prompt with available tools information
+      let systemPromptWithTools = this.systemPrompt;
+
+      // Add list of available tools if we have any
+      const allTools = this.getTools();
+      if (allTools.length > 0) {
+        systemPromptWithTools += '\n\nDOSTĘPNE NARZĘDZIA:\n';
+        for (const tool of allTools) {
+          systemPromptWithTools += `\n- ${tool.name}: ${tool.description}`;
+          if (tool.inputSchema && typeof tool.inputSchema === 'object') {
+            const schema = tool.inputSchema as any;
+            if (schema.properties) {
+              const params = Object.keys(schema.properties).join(', ');
+              systemPromptWithTools += `\n  Parametry: ${params}`;
+            }
+          }
+        }
+        systemPromptWithTools += '\n\nUżyj tych narzędzi poprzez format JSON opisany wyżej.';
+      }
+
       // Add system prompt as first message
       const messagesWithSystem = [
-        { role: 'system', content: this.systemPrompt },
+        { role: 'system', content: systemPromptWithTools },
         ...ollamaMessages,
       ];
 
@@ -180,21 +277,53 @@ export class OllamaAgent implements Agent {
         });
       }
 
-      // Call Ollama API
+      // Convert tools to Ollama format (OpenAI-compatible)
+      const ollamaTools = allTools.map((tool) => {
+        let parameters: any = { type: 'object', properties: {} };
+
+        if (tool.inputSchema && typeof tool.inputSchema === 'object') {
+          const schema = tool.inputSchema as any;
+          if (schema.type === 'object' && schema.properties) {
+            parameters = {
+              type: 'object',
+              properties: schema.properties,
+              required: schema.required || []
+            };
+          }
+        }
+
+        return {
+          type: 'function',
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: parameters
+          }
+        };
+      });
+
+      // Call Ollama API with native tool support
+      const requestBody: any = {
+        model: this.model,
+        messages: messagesWithSystem,
+        stream: false,
+        options: {
+          temperature: this.temperature,
+          num_predict: this.maxTokens,
+        },
+      };
+
+      // Add tools if available
+      if (ollamaTools.length > 0) {
+        requestBody.tools = ollamaTools;
+      }
+
       const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model: this.model,
-          messages: messagesWithSystem,
-          stream: false,
-          options: {
-            temperature: this.temperature,
-            num_predict: this.maxTokens,
-          },
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -202,14 +331,60 @@ export class OllamaAgent implements Agent {
         throw new Error(`Ollama API error (${response.status}): ${errorText}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as {
+        message?: {
+          content?: string,
+          tool_calls?: Array<{
+            id?: string,
+            type?: string,
+            function?: {
+              name: string,
+              arguments: string | Record<string, any>
+            }
+          }>
+        },
+        done?: boolean
+      };
+
       const content = data.message?.content || '';
 
-      // Note: Ollama doesn't natively support tool calling like Claude
-      // but we can simulate it by parsing the response for tool call patterns
-      // For now, return simple response without tool calls
+      // Parse tool calls from Ollama's native format (OpenAI-compatible)
+      const toolCalls: ToolCall[] = [];
+
+      if (data.message?.tool_calls && Array.isArray(data.message.tool_calls)) {
+        for (const call of data.message.tool_calls) {
+          if (call.function) {
+            // Parse arguments if they're a string
+            let args: Record<string, any>;
+            if (typeof call.function.arguments === 'string') {
+              try {
+                args = JSON.parse(call.function.arguments);
+              } catch (error) {
+                console.warn(`[OllamaAgent] Failed to parse tool arguments:`, error);
+                args = {};
+              }
+            } else {
+              args = call.function.arguments || {};
+            }
+
+            toolCalls.push({
+              id: call.id || `call_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+              name: call.function.name,
+              input: args
+            });
+          }
+        }
+      }
+
+      // Fallback: also try to parse tool calls from content (for models that don't use native format)
+      if (toolCalls.length === 0) {
+        const parsedToolCalls = this.parseToolCalls(content);
+        toolCalls.push(...parsedToolCalls);
+      }
+
       return {
         content,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         stopReason: data.done ? 'end_turn' : 'max_tokens',
       };
     } catch (error) {
@@ -284,8 +459,8 @@ export class OllamaAgent implements Agent {
         return [];
       }
 
-      const data = await response.json();
-      return data.models?.map((m: any) => m.name) || [];
+      const data = await response.json() as { models?: Array<{ name: string }> };
+      return data.models?.map((m) => m.name) || [];
     } catch (error) {
       console.error('[OllamaAgent] Error listing models:', error);
       return [];

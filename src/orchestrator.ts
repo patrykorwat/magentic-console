@@ -10,6 +10,7 @@ import {
   MCPServerConfig,
   AgentConfig,
   FileAttachment,
+  AgentResponse,
 } from './types/index.js';
 import { getCrossAgentTools, getGeminiTools } from './tools/index.js';
 
@@ -34,6 +35,7 @@ export class MagenticOrchestrator {
   private ollama: OllamaAgent | null = null;
   private conversationHistory: Message[] = [];
   public aborted: boolean = false;
+  public currentStepToolCalls: Array<{ id: string; name: string; input: Record<string, any>; result?: any }> = [];
 
   constructor(private config: OrchestratorConfig) {
     // Initialize Manager Agent with default Claude model from config
@@ -154,10 +156,7 @@ export class MagenticOrchestrator {
           result = await this.executeWithClaude(step.description);
           break;
         case 'gemini':
-          // Set Gemini model if specified in step
-          if (step.model && this.gemini) {
-            this.gemini.setModel(step.model);
-          }
+          // Note: Gemini model selection not implemented yet
           result = await this.executeWithGemini(step.description);
           break;
         case 'ollama':
@@ -320,6 +319,14 @@ export class MagenticOrchestrator {
           toolResult = { error: `Unknown tool: ${toolCall.name}` };
         }
 
+        // Track tool call for UI
+        this.currentStepToolCalls.push({
+          id: toolCall.id,
+          name: toolCall.name,
+          input: toolCall.input,
+          result: toolResult
+        });
+
         toolResults.push({
           toolCallId: toolCall.id,
           output: toolResult,
@@ -425,7 +432,7 @@ export class MagenticOrchestrator {
   }
 
   /**
-   * Execute a task with Ollama agent
+   * Execute a task with Ollama agent (with tool handling)
    */
   async executeWithOllama(task: string, files?: FileAttachment[]): Promise<string> {
     // Check if Ollama is configured
@@ -438,9 +445,134 @@ export class MagenticOrchestrator {
       throw new Error('Execution aborted by user');
     }
 
+    // Execute Ollama with automatic tool handling (similar to Claude)
+    const result = await this.executeOllamaWithToolHandling(task, files);
+    return result;
+  }
+
+  /**
+   * Execute Ollama with automatic tool handling
+   */
+  private async executeOllamaWithToolHandling(task: string, files?: FileAttachment[]): Promise<string> {
+    if (!this.ollama) {
+      throw new Error('Ollama agent is not configured.');
+    }
+
     const messages: Message[] = [{ role: 'user', content: task, files }];
-    const response = await this.ollama.execute(messages);
-    return response.content;
+    let toolCallIterations = 0;
+    const MAX_TOOL_ITERATIONS = 20;
+    let allToolCallsHistory: Array<{iteration: number, calls: Array<{name: string, input: any, result: any}>}> = [];
+
+    while (true) {
+      // Check for abort
+      if (this.aborted) {
+        throw new Error('Execution aborted by user');
+      }
+
+      // Prevent infinite loops
+      if (toolCallIterations >= MAX_TOOL_ITERATIONS) {
+        throw new Error(`Maximum tool call iterations (${MAX_TOOL_ITERATIONS}) exceeded. Task may be too complex or model is stuck in a loop.`);
+      }
+
+      console.log(`[Orchestrator] Ollama iteration ${toolCallIterations + 1}: Calling with ${messages.length} messages`);
+
+      // Get response from Ollama
+      const response = await this.ollama.execute(messages);
+
+      // If no tool calls, we're done - return formatted result with history
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        // Format final response with tool calls history
+        if (allToolCallsHistory.length > 0) {
+          let formattedResponse = '';
+          for (const iter of allToolCallsHistory) {
+            formattedResponse += `\n=== Iteracja ${iter.iteration} - Wykonane narzędzia ===\n`;
+            for (const call of iter.calls) {
+              formattedResponse += `\n🛠️ ${call.name}\n`;
+              formattedResponse += `Input: ${JSON.stringify(call.input, null, 2)}\n`;
+              formattedResponse += `Result: ${JSON.stringify(call.result, null, 2)}\n`;
+            }
+          }
+          formattedResponse += `\n=== Finalna odpowiedź LLM ===\n${response.content}`;
+          return formattedResponse;
+        }
+        return response.content;
+      }
+
+      // We have tool calls - increment counter and process them
+      toolCallIterations++;
+      console.log(`[Orchestrator] Processing ${response.toolCalls.length} tool call(s) from Ollama (iteration ${toolCallIterations})`);
+
+      // Execute all tool calls
+      const toolResults: ToolResult[] = [];
+      const currentIterationCalls: Array<{name: string, input: any, result: any}> = [];
+
+      for (const toolCall of response.toolCalls) {
+        console.log(`[Ollama] Tool call: ${toolCall.name}`);
+
+        let toolResult: any;
+
+        if (toolCall.name === 'invoke_gemini') {
+          const geminiTask = toolCall.input.task as string;
+          const context = toolCall.input.context as string | undefined;
+          const fullTask = context ? `${geminiTask}\n\nContext: ${context}` : geminiTask;
+          toolResult = await this.executeWithGemini(fullTask);
+        } else if (toolCall.name === 'invoke_claude') {
+          const claudeTask = toolCall.input.task as string;
+          toolResult = await this.executeWithClaude(claudeTask);
+        } else if (toolCall.name.startsWith('mcp_')) {
+          // Execute MCP tool through Ollama agent
+          toolResult = await this.ollama.executeMCPTool(toolCall.name, toolCall.input);
+        } else {
+          toolResult = { error: `Unknown tool: ${toolCall.name}` };
+        }
+
+        // Track tool call for history
+        currentIterationCalls.push({
+          name: toolCall.name,
+          input: toolCall.input,
+          result: toolResult
+        });
+
+        // Track tool call for UI
+        this.currentStepToolCalls.push({
+          id: toolCall.id,
+          name: toolCall.name,
+          input: toolCall.input,
+          result: toolResult
+        });
+
+        toolResults.push({
+          toolCallId: toolCall.id,
+          output: toolResult,
+        });
+      }
+
+      // Save this iteration's tool calls to history
+      allToolCallsHistory.push({
+        iteration: toolCallIterations,
+        calls: currentIterationCalls
+      });
+
+      // Add assistant's response to messages
+      messages.push({
+        role: 'assistant',
+        content: response.content
+      });
+
+      // Add tool results as user message
+      const toolResultsText = toolResults
+        .map((tr) => `Tool ${tr.toolCallId} (${response.toolCalls?.find(tc => tc.id === tr.toolCallId)?.name}) result:\n${JSON.stringify(tr.output, null, 2)}`)
+        .join('\n\n');
+
+      messages.push({
+        role: 'user',
+        content: `Otrzymano wyniki narzędzi:\n\n${toolResultsText}\n\nPrzeanalizuj wyniki i kontynuuj zadanie.`
+      });
+
+      console.log(`[Orchestrator] Messages array now has ${messages.length} messages`);
+
+      // Loop continues - next iteration will call Ollama with updated messages
+    }
   }
 
   /**
@@ -515,5 +647,21 @@ export class MagenticOrchestrator {
    */
   clearHistory(): void {
     this.conversationHistory = [];
+  }
+
+  /**
+   * Get and clear current step tool calls
+   */
+  getAndClearStepToolCalls(): Array<{ id: string; name: string; input: Record<string, any>; result?: any }> {
+    const calls = [...this.currentStepToolCalls];
+    this.currentStepToolCalls = [];
+    return calls;
+  }
+
+  /**
+   * Clear current step tool calls
+   */
+  clearStepToolCalls(): void {
+    this.currentStepToolCalls = [];
   }
 }
