@@ -8,7 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { promises as fs } from 'fs';
 import { MagenticOrchestrator } from '../orchestrator.js';
-import { MCPServerConfig } from '../types/index.js';
+import { MCPServerConfig, Plan } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -175,6 +175,7 @@ interface ChatSession {
     timestamp: string;
     files?: FileAttachment[];
   }>;
+  plan?: Plan; // Plan utworzony przez managera
   stepExecutions?: StepExecution[]; // Szczegóły wykonania każdego kroku
   createdAt: string;
   updatedAt: string;
@@ -182,6 +183,7 @@ interface ChatSession {
 
 let currentChatId: string | null = null;
 let currentChatFiles: FileAttachment[] = []; // Files available for current execution context
+let currentExecutionSession: ChatSession | null = null; // Current execution session for abort handling
 
 // WebSocket connection
 wss.on('connection', (ws) => {
@@ -372,7 +374,7 @@ async function loadExecution(executionId: string): Promise<ChatSession | null> {
   }
 }
 
-async function listExecutions(): Promise<Array<{ id: string; task: string; createdAt: string; updatedAt: string; stepCount: number; aborted?: boolean }>> {
+async function listExecutions(): Promise<Array<{ id: string; task: string; createdAt: string; updatedAt: string; stepCount: number; plannedSteps: number; aborted?: boolean }>> {
   try {
     await ensureExecutionsDir();
     const files = await fs.readdir(EXECUTIONS_DIR);
@@ -388,10 +390,11 @@ async function listExecutions(): Promise<Array<{ id: string; task: string; creat
           const taskMessage = session.messages.find(m => m.role === 'user');
           const task = taskMessage?.content || 'Nieznane zadanie';
 
-          // Count step messages (exclude plan and final result)
-          const stepCount = session.messages.filter(m =>
-            m.role === 'assistant' && m.content.startsWith('Krok ')
-          ).length;
+          // Count executed steps
+          const stepCount = session.stepExecutions?.length || 0;
+
+          // Count planned steps from manager's plan
+          const plannedSteps = session.plan?.steps?.length || 0;
 
           // Check if aborted
           const aborted = session.messages.some(m =>
@@ -404,6 +407,7 @@ async function listExecutions(): Promise<Array<{ id: string; task: string; creat
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
             stepCount,
+            plannedSteps,
             aborted,
           });
         } catch (error) {
@@ -444,6 +448,18 @@ async function initOrchestrator() {
     }
   }
 
+  // Load manager prompt from config
+  let managerPrompt: string | undefined;
+  try {
+    const fullConfig = await loadMagenticConfig();
+    if (fullConfig.managerPrompt) {
+      managerPrompt = fullConfig.managerPrompt;
+      console.log('[Server] Loaded manager prompt from config file');
+    }
+  } catch (error) {
+    console.log('[Server] Could not load manager prompt, using built-in default');
+  }
+
   orchestrator = new MagenticOrchestrator({
     anthropicApiKey: config.anthropicApiKey,
     googleApiKey: config.googleApiKey,
@@ -452,6 +468,7 @@ async function initOrchestrator() {
     geminiConfig: config.geminiConfig,
     ollamaConfig: config.ollamaConfig,
     ollamaBaseUrl: config.ollamaBaseUrl,
+    managerPrompt,
   });
 
   await orchestrator.initialize();
@@ -719,6 +736,42 @@ app.post('/api/ollama/set-prompt', async (req, res) => {
   }
 });
 
+// Get manager prompt
+app.get('/api/manager/prompt', async (_req, res) => {
+  try {
+    const fullConfig = await loadMagenticConfig();
+    res.json({ prompt: fullConfig.managerPrompt || '' });
+  } catch (error: any) {
+    console.error('[Server] Error loading manager prompt:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Save manager prompt
+app.post('/api/manager/prompt', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'Invalid prompt' });
+    }
+
+    // Load full config
+    const fullConfig = await loadMagenticConfig();
+
+    // Update manager prompt
+    fullConfig.managerPrompt = prompt;
+
+    // Save to file
+    await saveMagenticConfig(fullConfig);
+
+    res.json({ success: true, message: 'Manager prompt saved successfully' });
+  } catch (error: any) {
+    console.error('[Server] Error saving manager prompt:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get agent capabilities
 app.get('/api/agents', (req, res) => {
   if (!orchestrator) {
@@ -942,9 +995,6 @@ app.post('/api/plan', async (req, res) => {
 
 // Execute a task with planning
 app.post('/api/execute', async (req, res) => {
-  // Declare session outside try block so it's accessible in catch
-  let session: ChatSession | null = null;
-
   try {
     if (!orchestrator) {
       return res.status(400).json({ error: 'Orchestrator not initialized' });
@@ -963,7 +1013,7 @@ app.post('/api/execute', async (req, res) => {
 
     // Create new execution session
     const sessionId = generateExecutionId();
-    session = {
+    currentExecutionSession = {
       id: sessionId,
       agent: 'manager',
       messages: [],
@@ -993,7 +1043,7 @@ app.post('/api/execute', async (req, res) => {
     }
 
     // Add user task to session
-    session.messages.push({
+    currentExecutionSession.messages.push({
       role: 'user',
       content: task,
       timestamp: new Date().toISOString(),
@@ -1033,8 +1083,11 @@ app.post('/api/execute', async (req, res) => {
       plan,
     });
 
+    // Save plan in session
+    currentExecutionSession.plan = plan;
+
     // Add plan to session as assistant message
-    session.messages.push({
+    currentExecutionSession.messages.push({
       role: 'assistant',
       content: `Plan wykonania:\n${JSON.stringify(plan, null, 2)}`,
       timestamp: new Date().toISOString(),
@@ -1076,7 +1129,10 @@ app.post('/api/execute', async (req, res) => {
         startedAt: new Date().toISOString(),
       };
 
-      session.stepExecutions!.push(stepExecution);
+      currentExecutionSession.stepExecutions!.push(stepExecution);
+
+      // Clear tool calls from previous step
+      orchestrator.clearStepToolCalls();
 
       broadcast({
         type: 'step_start',
@@ -1155,28 +1211,32 @@ app.post('/api/execute', async (req, res) => {
         stepExecution.completedAt = new Date().toISOString();
 
         // Save execution state after each successful step
-        session.updatedAt = new Date().toISOString();
-        await saveExecution(session);
+        currentExecutionSession.updatedAt = new Date().toISOString();
+        await saveExecution(currentExecutionSession);
 
       } catch (error: any) {
-        // Update step execution with error
+        // Get tool calls even on error (they may have been executed before the error occurred)
+        const toolCalls = orchestrator.getAndClearStepToolCalls();
+
+        // Update step execution with error and tool calls
         stepExecution.status = error.message === 'Execution aborted by user' ? 'aborted' : 'error';
         stepExecution.error = error.message;
+        stepExecution.toolCalls = toolCalls.length > 0 ? toolCalls : undefined;
         stepExecution.completedAt = new Date().toISOString();
 
         // Save execution state even on error
-        session.updatedAt = new Date().toISOString();
-        await saveExecution(session);
+        currentExecutionSession.updatedAt = new Date().toISOString();
+        await saveExecution(currentExecutionSession);
 
         // Check if it was an abort error
         if (error.message === 'Execution aborted by user') {
-          session.messages.push({
+          currentExecutionSession.messages.push({
             role: 'assistant',
             content: '[Wykonanie przerwane przez użytkownika]',
             timestamp: new Date().toISOString(),
           });
-          session.updatedAt = new Date().toISOString();
-          await saveExecution(session);
+          currentExecutionSession.updatedAt = new Date().toISOString();
+          await saveExecution(currentExecutionSession);
 
           broadcast({
             type: 'execution_aborted',
@@ -1186,15 +1246,15 @@ app.post('/api/execute', async (req, res) => {
             plan,
             result: results.join('\n\n') + '\n\n[Wykonanie przerwane]',
             aborted: true,
-            sessionId: session.id,
+            sessionId: currentExecutionSession.id,
           });
         }
 
-        // For other errors: mark step as failed, broadcast error, but continue with next steps
+        // For other errors: mark step as failed, broadcast error, and STOP execution
         const errorResult = `[BŁĄD] ${error.message}`;
         results.push(errorResult);
 
-        session.messages.push({
+        currentExecutionSession.messages.push({
           role: 'assistant',
           content: `Krok ${step.step} (${step.agent}): ${step.description}\n\n❌ Błąd:\n${error.message}`,
           timestamp: new Date().toISOString(),
@@ -1205,15 +1265,29 @@ app.post('/api/execute', async (req, res) => {
           step,
           result: errorResult,
           stepExecution,
+          toolCalls: stepExecution.toolCalls, // Include tool calls even on error
         });
 
-        // Continue with next steps instead of throwing
+        // STOP execution - do not continue with next steps
         console.error(`[Server] Step ${step.step} failed: ${error.message}`);
-        continue; // Skip to next step
+        console.error(`[Server] Stopping execution due to error in step ${step.step}`);
+
+        // Broadcast execution error and return
+        broadcast({
+          type: 'execution_error',
+          error: `Wykonanie przerwane: Błąd w kroku ${step.step}: ${error.message}`,
+        });
+
+        return res.json({
+          plan,
+          result: results.join('\n\n') + `\n\n❌ Wykonanie przerwane z powodu błędu w kroku ${step.step}`,
+          error: true,
+          sessionId: currentExecutionSession.id,
+        });
       }
 
       // Add step result to session (only for successful steps)
-      session.messages.push({
+      currentExecutionSession.messages.push({
         role: 'assistant',
         content: `Krok ${step.step} (${step.agent}): ${step.description}\n\nWynik:\n${result}`,
         timestamp: new Date().toISOString(),
@@ -1224,28 +1298,29 @@ app.post('/api/execute', async (req, res) => {
         step,
         result,
         stepExecution,
+        toolCalls: stepExecution.toolCalls, // Include tool calls in broadcast
       });
     }
 
     const finalResult = results.join('\n\n');
 
     // Add final result to session
-    session.messages.push({
+    currentExecutionSession.messages.push({
       role: 'assistant',
       content: `Wykonanie zakończone:\n\n${finalResult}`,
       timestamp: new Date().toISOString(),
     });
 
     // Save the complete execution
-    session.updatedAt = new Date().toISOString();
-    await saveExecution(session);
+    currentExecutionSession.updatedAt = new Date().toISOString();
+    await saveExecution(currentExecutionSession);
 
     broadcast({
       type: 'execution_complete',
       result: finalResult,
     });
 
-    res.json({ plan, result: finalResult, sessionId: session.id });
+    res.json({ plan, result: finalResult, sessionId: currentExecutionSession.id });
   } catch (error: any) {
     // Reset abort flag
     if (orchestrator) {
@@ -1269,18 +1344,18 @@ app.post('/api/execute', async (req, res) => {
     }
 
     // Save execution state even on error
-    if (session) {
-      session.messages.push({
+    if (currentExecutionSession) {
+      currentExecutionSession.messages.push({
         role: 'assistant',
         content: `[Błąd wykonania]: ${errorMessage}\n\nSzczegóły:\n${fullErrorDetails}`,
         timestamp: new Date().toISOString(),
       });
-      session.updatedAt = new Date().toISOString();
+      currentExecutionSession.updatedAt = new Date().toISOString();
 
       // Log that we're saving the error
-      console.log(`[Server] Saving execution ${session.id} with error: ${errorMessage}`);
-      await saveExecution(session);
-      console.log(`[Server] Execution ${session.id} saved to executions/${session.id}.json`);
+      console.log(`[Server] Saving execution ${currentExecutionSession.id} with error: ${errorMessage}`);
+      await saveExecution(currentExecutionSession);
+      console.log(`[Server] Execution ${currentExecutionSession.id} saved to executions/${currentExecutionSession.id}.json`);
     }
 
     // Broadcast error and stop execution
@@ -1356,11 +1431,24 @@ app.post('/api/chats/new', (req, res) => {
 });
 
 // Abort task execution
-app.post('/api/execute/abort', (req, res) => {
+app.post('/api/execute/abort', async (req, res) => {
   try {
     if (orchestrator) {
       orchestrator.aborted = true;
     }
+
+    // Save aborted execution to history
+    if (currentExecutionSession) {
+      currentExecutionSession.messages.push({
+        role: 'assistant',
+        content: '[Wykonanie przerwane przez użytkownika]',
+        timestamp: new Date().toISOString(),
+      });
+      currentExecutionSession.updatedAt = new Date().toISOString();
+      await saveExecution(currentExecutionSession);
+      console.log(`[Server] Aborted execution ${currentExecutionSession.id} saved to history`);
+    }
+
     broadcast({ type: 'execution_aborted' });
     res.json({ success: true });
   } catch (error: any) {
@@ -1372,7 +1460,7 @@ app.post('/api/execute/abort', (req, res) => {
 app.get('/api/executions', async (req, res) => {
   try {
     const executions = await listExecutions();
-    res.json({ executions });
+    res.json(executions);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1386,7 +1474,7 @@ app.get('/api/executions/:executionId', async (req, res) => {
     if (!execution) {
       return res.status(404).json({ error: 'Execution not found' });
     }
-    res.json({ execution });
+    res.json(execution);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

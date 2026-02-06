@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   Agent,
   AgentResponse,
@@ -7,6 +9,7 @@ import {
   PlanStep,
   Tool,
   ToolResult,
+  MCPServerConfig,
 } from '../types/index.js';
 
 interface ClaudeModel {
@@ -26,121 +29,242 @@ export class ManagerAgent implements Agent {
   private availableModels: ClaudeModel[] = [];
   private modelsLastFetched: number = 0;
   private readonly MODELS_CACHE_TTL = 3600000; // 1 hour in ms
+  private mcpClients: Map<string, Client> = new Map();
+  private mcpTools: Tool[] = [];
 
-  constructor(apiKey: string, defaultClaudeModel?: string) {
+  constructor(
+    apiKey: string,
+    defaultClaudeModel?: string,
+    customPrompt?: string,
+    private mcpServers: MCPServerConfig[] = []
+  ) {
     this.client = new Anthropic({ apiKey });
     this.name = 'Manager';
     this.model = 'claude-sonnet-4-5-20250929';
     this.defaultClaudeModel = defaultClaudeModel || 'claude-sonnet-4-5-20250929';
     this.capabilities = ['planning', 'orchestration', 'delegation', 'coordination'];
-    this.systemPrompt = `Jesteś Agentem Menedżera odpowiedzialnym za planowanie i orkiestrację zadań pomiędzy wyspecjalizowanymi agentami.
 
-Dostępni agenci:
-1. Agent Claude - Specjalizuje się w głębokim rozumowaniu, ANALIZIE PLIKÓW PDF, pracy z bazami danych przez MCP, analizie kodu, generowaniu kodu i rozwiązywaniu złożonych problemów. Ma dostęp do narzędzi MCP i może czytać pliki PDF. PŁATNY ($). Używaj do: analizy plików PDF, złożonych operacji z bazą danych przez MCP, złożonej analizy danych, głębokiego rozumowania, zadań wymagających wieloetapowego myślenia.
-
-   Dostępne modele Claude (WAŻNE - wybieraj mądrze ze względu na KOSZTY):
-   a) claude-haiku-4-5-20251001 - TANI, szybki model do prostych zadań (analiza tekstu, proste operacje, formatowanie)
-   b) claude-sonnet-4-5-20250929 - DROGI, potężny model do złożonych zadań (głęboka analiza PDF, skomplikowane zapytania do bazy danych, rozumowanie wieloetapowe)
-   c) claude-opus-4-5-20251101 - BARDZO DROGI, najpotężniejszy model do najtrudniejszych zadań (używaj TYLKO gdy Sonnet nie wystarcza!)
-
-2. Agent Gemini - Specjalizuje się w wyszukiwaniu w internecie, syntezie informacji TEKSTOWYCH, szybkiej analizie i podsumowywaniu tekstu. NIE MOŻE czytać plików PDF bezpośrednio. PŁATNY ($). Używaj do: podsumowywania TEKSTU (nie plików!), syntezy informacji z poprzednich kroków, wyszukiwania informacji.
-
-3. Agent Ollama - Lokalny model open-source działający OFFLINE. DARMOWY, ale słabszy od Claude/Gemini. MA PEŁNY DOSTĘP DO NARZĘDZI MCP (tak jak Claude) - może operować na bazach danych itp. Używaj do: prostych pytań/odpowiedzi, podstawowej analizy tekstu, PROSTYCH I ŚREDNIO ZŁOŻONYCH zadań z bazą danych przez MCP (Bielik jest wystarczająco inteligentny!), zadań nie wymagających najwyższego poziomu rozumowania, gdy prywatność jest priorytetem lub gdy chcesz zaoszczędzić pieniądze (DARMOWY!).
-
-WAŻNE ZASADY WYBORU AGENTA I MODELU:
-- Jeśli zadanie wymaga CZYTANIA/ANALIZY PLIKÓW PDF → ZAWSZE wybierz Claude (tylko Claude obsługuje PDF)
-  * Prosta ekstrakcja tekstu z PDF → Haiku (tani)
-  * Głęboka analiza zawartości PDF, wyciąganie wniosków → Sonnet (drogi)
-  * Ekstremalnie trudna analiza, gdy Sonnet nie wystarcza → Opus (bardzo drogi, ostateczność!)
-- Jeśli zadanie wymaga OPERACJI Z BAZĄ DANYCH przez MCP → wybierz Claude LUB Ollama (oba mają MCP)
-  * Bardzo proste zapytania (odczyt pojedynczych rekordów, proste filtry) → Ollama Bielik (darmowy!)
-  * Średnio złożone zapytania (złączone tabele, agregacje, analiza schematu) → Ollama Bielik LUB Haiku (Bielik radzi sobie dobrze i jest darmowy!)
-  * Złożone zapytania wieloetapowe wymagające głębokiej analizy → Sonnet (drogi, ale potężny)
-  * Najwyższa złożoność (gdy Sonnet nie radzi sobie) → Opus (bardzo drogi, ostateczność!)
-- Jeśli zadanie wymaga PROSTEJ analizy tekstu BEZ złożonego rozumowania → użyj Ollama (darmowy, lokalny)
-- Jeśli zadanie wymaga podsumowania TEKSTU z poprzednich kroków → użyj Gemini lub Ollama (tanie opcje)
-- Gemini i Ollama NIE MOGĄ otrzymywać plików w requiredFiles - tylko Claude!
-
-OPTYMALIZACJA KOSZTÓW - zawsze preferuj tańsze rozwiązania:
-1. Ollama (DARMOWY) > Gemini > Haiku > Sonnet > Opus (od najtańszego do najdroższego)
-2. Używaj Sonneta TYLKO gdy zadanie naprawdę wymaga zaawansowanego rozumowania
-3. Używaj Opusa TYLKO w absolutnie ostateczności, gdy Sonnet nie wystarcza (BARDZO DROGI!)
-4. Większość prostych zadań można wykonać Ollama (lokalne, darmowe)
-5. Używaj Gemini/Haiku gdy Ollama nie wystarcza
-
-Twoje zadania:
-1. Analizowanie zapytań użytkownika
-2. Tworzenie szczegółowych planów wykonania
-3. Delegowanie zadań do najbardziej odpowiedniego agenta
-4. Koordynowanie przepływów pracy wielu agentów
-
-Podczas tworzenia planu:
-- Rozbij złożone zadania na jasne kroki
-- Przypisz każdy krok do najbardziej odpowiedniego agenta (claude, gemini, ollama lub manager)
-- Podaj uzasadnienie dla każdego przypisania (reasoning musi być PO POLSKU)
-- Oszacuj złożoność (low, medium, high)
-
-WAŻNE - LIMITY WYNIKÓW NARZĘDZI MCP:
-- Gdy Claude/Ollama (Bielik) używa narzędzi MCP (bazy danych), wyniki są automatycznie skracane do 10,000 znaków aby nie przekroczyć limitu kontekstu
-- W opisie zadania dla Claude/Ollama ZAWSZE dodaj instrukcję: "Używaj precyzyjnych zapytań z filtrami (WHERE, LIMIT). Pobieraj tylko niezbędne dane, nie całą bazę."
-- Jeśli zadanie wymaga analizy dużej ilości danych, podziel je na mniejsze kroki z konkretnymi filtrami/limitami
-- Przykład DOBRY: "Znajdź top 10 rekordów spełniających warunek X (użyj WHERE, ORDER BY, LIMIT 10)"
-- Przykład ZŁY: "Pobierz wszystkie rekordy z bazy" (może zwrócić tysiące rekordów i przekroczyć limit kontekstu)
-
-BIELIK I MCP:
-- Bielik (SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M) MA PEŁNE WSPARCIE dla tool calling i MCP
-- Może wykonywać zapytania do baz danych przez MCP
-- Jest wystarczająco inteligentny do większości operacji bazodanowych (analiza schematu, zapytania, agregacje)
-- Preferuj Bielika dla zadań MCP gdy tylko jest to możliwe - jest DARMOWY i działa lokalnie!
-
-Jeśli w zadaniu znajdują się załączone pliki, przeanalizuj które pliki są potrzebne w którym kroku i przypisz je używając pola "requiredFiles" (lista nazw plików).
-
-Zwróć plan w formacie JSON:
-{
-  "goal": "Jasny opis celu",
-  "steps": [
-    {
-      "step": 1,
-      "description": "Co należy zrobić",
-      "agent": "claude|gemini|ollama|manager",
-      "model": "claude-haiku-4-5-20251001|claude-sonnet-4-5-20250929|claude-opus-4-5-20251101|SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M|qwen3:8b", // OPCJONALNE - dla Claude/Ollama
-      "reasoning": "Dlaczego ten agent i model są najlepiej dopasowane - PO POLSKU (wyjaśnij wybór: Bielik/Ollama dla prostych/średnich zadań MCP DARMOWE, Gemini/Haiku dla średnich $, Sonnet dla złożonych $$, Opus TYLKO dla ekstremalnie trudnych $$$)",
-      "requiredFiles": ["nazwa_pliku.pdf"] // OPCJONALNE - tylko jeśli krok wymaga konkretnych plików (tylko Claude!)
+    console.log(`[ManagerAgent] Constructor called with ${this.mcpServers.length} MCP server(s)`);
+    if (this.mcpServers.length > 0) {
+      console.log('[ManagerAgent] MCP servers:', this.mcpServers.map(s => s.name).join(', '));
     }
-  ],
-  "estimatedComplexity": "low|medium|high"
-}`;
+
+    // Use custom prompt from config file, or minimal fallback if config not found
+    this.systemPrompt = customPrompt || 'Jesteś Agentem Menedżera. Zwróć plan w formacie JSON z polami: goal, steps (z polami: step, description, agent, model, reasoning, requiredFiles), estimatedComplexity.';
   }
 
   /**
-   * Load Ollama models configuration from file
+   * Initialize MCP servers and load their tools
+   */
+  async initializeMCP(): Promise<void> {
+    console.log(`[ManagerAgent] Starting MCP initialization with ${this.mcpServers.length} server(s)`);
+
+    for (const serverConfig of this.mcpServers) {
+      try {
+        console.log(`[ManagerAgent] Initializing MCP server: ${serverConfig.name}`);
+        console.log(`[ManagerAgent] Command: ${serverConfig.command} ${serverConfig.args.join(' ')}`);
+
+        const transport = new StdioClientTransport({
+          command: serverConfig.command,
+          args: serverConfig.args,
+          env: serverConfig.env,
+        });
+
+        console.log(`[ManagerAgent] Transport created for ${serverConfig.name}`);
+
+        const client = new Client(
+          {
+            name: `manager-agent-mcp-client-${serverConfig.name}`,
+            version: '1.0.0',
+          },
+          {
+            capabilities: {},
+          }
+        );
+
+        await client.connect(transport);
+        this.mcpClients.set(serverConfig.name, client);
+
+        // List available tools from MCP server
+        const toolsResponse = await client.listTools();
+
+        // Convert MCP tools to our Tool format
+        const mcpTools: Tool[] = toolsResponse.tools.map((tool) => ({
+          name: `mcp_${serverConfig.name}_${tool.name}`,
+          description: tool.description || '',
+          inputSchema: tool.inputSchema as any,
+        }));
+
+        this.mcpTools.push(...mcpTools);
+        console.log(
+          `[ManagerAgent] Loaded ${mcpTools.length} tools from MCP server: ${serverConfig.name}`
+        );
+        console.log(`[ManagerAgent] Tool names: ${mcpTools.map(t => t.name).join(', ')}`);
+      } catch (error) {
+        console.error(
+          `[ManagerAgent] Failed to initialize MCP server ${serverConfig.name}:`,
+          error
+        );
+      }
+    }
+  }
+
+  /**
+   * Fetch Neo4j schema summary from MCP (labels and their properties)
+   */
+  async fetchNeo4jSchema(): Promise<string> {
+    if (this.mcpClients.size === 0) {
+      console.log('[ManagerAgent] No MCP clients available for schema fetch');
+      return '';
+    }
+
+    // Look for neo4j MCP client
+    const neo4jClient = this.mcpClients.get('neo4j');
+    if (!neo4jClient) {
+      console.log('[ManagerAgent] No neo4j MCP client found');
+      return '';
+    }
+
+    try {
+      console.log('[ManagerAgent] Fetching Neo4j schema summary via MCP...');
+
+      // Try using get_neo4j_schema tool
+      const result = await neo4jClient.callTool({
+        name: 'get_neo4j_schema',
+        arguments: {},
+      });
+
+      // MCP tool result has content array with text items
+      if (result.content && Array.isArray(result.content) && result.content.length > 0) {
+        const firstContent = result.content[0] as any;
+        const fullSchema = firstContent?.text || '';
+
+        console.log(`[ManagerAgent] Fetched full Neo4j schema (${fullSchema.length} chars)`);
+
+        // Always create ultra-compact summary for small models
+        console.log('[ManagerAgent] Creating ultra-compact schema summary...');
+        console.log('[ManagerAgent] First 500 chars of full schema:', fullSchema.substring(0, 500));
+        const compactSchema = this.extractCompactSchema(fullSchema);
+        console.log(`[ManagerAgent] Compact schema (${compactSchema.length} chars):`, compactSchema);
+
+        return compactSchema;
+      }
+
+      return '';
+    } catch (error) {
+      console.error('[ManagerAgent] Error fetching Neo4j schema:', error);
+      return '';
+    }
+  }
+
+  /**
+   * Extract ultra-compact schema summary (labels + top 3-5 properties each)
+   */
+  private extractCompactSchema(fullSchema: string): string {
+    try {
+      // Neo4j schema is JSON format
+      const schema = JSON.parse(fullSchema);
+
+      const MAX_ITEMS = 10;
+      const MAX_PROPS = 5;
+
+      let summary = 'Neo4j Schema:\n\n';
+      let itemCount = 0;
+
+      // Extract node labels (skip relationships which start with uppercase or have underscores)
+      const nodeLabels: string[] = [];
+      const relationships: string[] = [];
+
+      for (const [key, value] of Object.entries(schema)) {
+        if (itemCount >= MAX_ITEMS * 2) break; // Limit total items
+
+        const item = value as any;
+
+        // Detect if it's a relationship (has type relationship or key is ALL_CAPS_WITH_UNDERSCORES)
+        if (item.type === 'relationship' || key.match(/^[A-Z_]+$/)) {
+          relationships.push(key);
+        } else {
+          // It's a node label
+          const props = item.properties ? Object.keys(item.properties).slice(0, MAX_PROPS) : [];
+          nodeLabels.push(`${key}: ${props.join(', ') || 'no properties'}`);
+        }
+      }
+
+      // Add node labels
+      if (nodeLabels.length > 0) {
+        summary += 'Nodes:\n';
+        for (const label of nodeLabels.slice(0, MAX_ITEMS)) {
+          summary += `- ${label}\n`;
+          itemCount++;
+        }
+      }
+
+      // Add relationships (just names, no properties to save space)
+      if (relationships.length > 0 && itemCount < MAX_ITEMS) {
+        summary += '\nRelationships: ';
+        summary += relationships.slice(0, 5).join(', ');
+        summary += '\n';
+      }
+
+      return summary.trim();
+
+    } catch (error) {
+      console.error('[ManagerAgent] Error parsing JSON schema:', error);
+      return `Schema (${fullSchema.length} chars, parse error)`;
+    }
+  }
+
+  /**
+   * Close all MCP connections
+   */
+  async closeMCP(): Promise<void> {
+    for (const [name, client] of this.mcpClients.entries()) {
+      try {
+        await client.close();
+        console.log(`[ManagerAgent] Closed MCP server: ${name}`);
+      } catch (error) {
+        console.error(`[ManagerAgent] Error closing MCP server ${name}:`, error);
+      }
+    }
+    this.mcpClients.clear();
+  }
+
+  /**
+   * Load Ollama models configuration from magentic-config.json
    */
   private async loadOllamaModels(): Promise<any[]> {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const configPath = path.join(process.cwd(), 'magentic-config.json');
+
     try {
-      const fs = await import('fs/promises');
-      const path = await import('path');
-      const configPath = path.join(process.cwd(), 'ollama-models.json');
       const data = await fs.readFile(configPath, 'utf-8');
       const config = JSON.parse(data);
-      return config.models || [];
-    } catch (error) {
-      console.log('[ManagerAgent] Could not load ollama-models.json, using defaults');
-      // Default Ollama models if file not found
-      return [
-        {
-          id: 'qwen2.5:7b',
-          name: 'Qwen 2.5 (7B)',
-          description: 'Najlepszy balans - szybki i inteligentny',
-          capabilities: ['reasoning', 'coding', 'mcp_tools'],
-          recommended: true
-        },
-        {
-          id: 'llama3.2:3b',
-          name: 'Llama 3.2 (3B)',
-          description: 'Bardzo szybki - proste zadania',
-          capabilities: ['simple_qa']
+
+      if (!config.models || !Array.isArray(config.models)) {
+        throw new Error('magentic-config.json: Missing or invalid "models" array');
+      }
+
+      if (config.models.length === 0) {
+        throw new Error('magentic-config.json: "models" array is empty');
+      }
+
+      // Validate each model has required fields
+      for (const model of config.models) {
+        if (!model.id) {
+          throw new Error(`magentic-config.json: Model missing "id" field: ${JSON.stringify(model)}`);
         }
-      ];
+      }
+
+      return config.models;
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        throw new Error(`magentic-config.json not found at: ${configPath}`);
+      }
+      if (error instanceof SyntaxError) {
+        throw new Error(`magentic-config.json contains invalid JSON: ${error.message}`);
+      }
+      throw error; // Re-throw validation errors and other errors
     }
   }
 
@@ -362,10 +486,22 @@ Zwróć plan w formacie JSON:
    * Create a plan for a given task
    */
   async createPlan(task: string): Promise<Plan> {
+    // Fetch Neo4j schema if available and task involves Neo4j/database
+    let schemaContext = '';
+    let compactSchema = '';
+    if (task.toLowerCase().includes('neo4j') || task.toLowerCase().includes('graf') || task.toLowerCase().includes('baz') || task.toLowerCase().includes('cypher')) {
+      console.log('[ManagerAgent] Task involves Neo4j - fetching schema...');
+      const schema = await this.fetchNeo4jSchema();
+      if (schema) {
+        compactSchema = schema; // Save for later use in step descriptions
+        schemaContext = `\n\n🗄️ RZECZYWISTY SCHEMAT NEO4J:\n${schema}\n\n⚠️ WAŻNE: Używaj TYLKO tych etykiet, właściwości i relacji które są w powyższym schemacie! NIE WYMYŚLAJ własnych etykiet jak "Person", "Politician" itp.`;
+      }
+    }
+
     const messages: Message[] = [
       {
         role: 'user',
-        content: `Stwórz szczegółowy plan wykonania dla następującego zadania:\n\n${task}\n\nOdpowiedz TYLKO obiektem JSON, bez dodatkowego tekstu. Pamiętaj: pole "reasoning" musi być PO POLSKU.`,
+        content: `Stwórz szczegółowy plan wykonania dla następującego zadania:\n\n${task}${schemaContext}\n\nOdpowiedz TYLKO obiektem JSON, bez dodatkowego tekstu. Pamiętaj: pole "reasoning" musi być PO POLSKU.`,
       },
     ];
 
@@ -379,6 +515,16 @@ Zwróć plan w formacie JSON:
       }
 
       const plan: Plan = JSON.parse(jsonMatch[0]);
+
+      // Add compact schema to Ollama/Bielik step descriptions (not to Claude - it has MCP access)
+      if (compactSchema) {
+        for (const step of plan.steps) {
+          if (step.agent === 'ollama') {
+            step.description = `${step.description}\n\n📋 SCHEMAT NEO4J:\n${compactSchema}\n\n⚠️ NIE UŻYWAJ narzędzia 'get_neo4j_schema' - schemat jest już powyżej! Używaj TYLKO 'read_neo4j_cypher' lub 'write_neo4j_cypher'.`;
+          }
+        }
+      }
+
       return plan;
     } catch (error) {
       console.error('[ManagerAgent] Error parsing plan:', error);

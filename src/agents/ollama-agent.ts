@@ -146,7 +146,30 @@ export class OllamaAgent implements Agent {
   private parseToolCalls(content: string): ToolCall[] {
     const toolCalls: ToolCall[] = [];
 
-    // Try to find JSON code blocks with tool_calls
+    // Format 1: Try to parse XML <tool_call> tags (Bielik format)
+    const xmlToolCallRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
+    let xmlMatch;
+
+    while ((xmlMatch = xmlToolCallRegex.exec(content)) !== null) {
+      try {
+        const jsonContent = xmlMatch[1];
+        console.log(`[OllamaAgent] Raw XML tool call JSON: ${jsonContent}`);
+        const parsed = JSON.parse(jsonContent);
+
+        if (parsed.name && (parsed.arguments || parsed.input || parsed.parameters)) {
+          toolCalls.push({
+            id: parsed.id || `call_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+            name: parsed.name,
+            input: parsed.arguments || parsed.input || parsed.parameters
+          });
+          console.log(`[OllamaAgent] Parsed XML tool call: ${parsed.name}`);
+        }
+      } catch (error) {
+        console.warn('[OllamaAgent] Failed to parse XML tool call:', error);
+      }
+    }
+
+    // Format 2: Try to find JSON code blocks with tool_calls
     const jsonBlockRegex = /```json\s*\n([\s\S]*?)\n```/g;
     let match;
 
@@ -180,7 +203,7 @@ export class OllamaAgent implements Agent {
       }
     }
 
-    // Also try to parse the entire content as JSON if no code blocks found
+    // Format 3: Also try to parse the entire content as JSON if no code blocks found
     if (toolCalls.length === 0) {
       try {
         const parsed = JSON.parse(content.trim());
@@ -318,13 +341,20 @@ export class OllamaAgent implements Agent {
         requestBody.tools = ollamaTools;
       }
 
-      const response = await fetch(`${this.baseUrl}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-      });
+      // Create abort controller with 5 minute timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutes
+
+      try {
+        const response = await fetch(`${this.baseUrl}/api/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -382,11 +412,18 @@ export class OllamaAgent implements Agent {
         toolCalls.push(...parsedToolCalls);
       }
 
-      return {
-        content,
-        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-        stopReason: data.done ? 'end_turn' : 'max_tokens',
-      };
+        return {
+          content,
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          stopReason: data.done ? 'end_turn' : 'max_tokens',
+        };
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          throw new Error('Ollama request timeout after 5 minutes. Try simpler query or smaller max_tokens.');
+        }
+        throw fetchError;
+      }
     } catch (error) {
       console.error('[OllamaAgent] Error executing:', error);
 

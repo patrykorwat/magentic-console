@@ -63,8 +63,13 @@ function handleWebSocketMessage(data) {
 
         case 'step_complete':
             stepResults[data.step.step] = data.result;
-            updateStepStatusRealtime(data.step.step, 'completed', data.step, data.result);
-            addLog(`Krok ${data.step.step} zakończony`, 'success');
+            // Add tool calls to step data if available
+            const stepDataWithTools = { ...data.step };
+            if (data.toolCalls && data.toolCalls.length > 0) {
+                stepDataWithTools.toolCalls = data.toolCalls;
+            }
+            updateStepStatusRealtime(data.step.step, 'completed', stepDataWithTools, data.result);
+            addLog(`Krok ${data.step.step} zakończony${data.toolCalls ? ` (${data.toolCalls.length} tool calls)` : ''}`, 'success');
             break;
 
         case 'execution_start':
@@ -80,6 +85,8 @@ function handleWebSocketMessage(data) {
             document.getElementById('execute-btn').disabled = false;
             document.getElementById('abort-btn').style.display = 'none';
             addLog('Wykonanie zadania zakończone', 'success');
+            // Refresh history
+            loadExecutionsHistory();
             break;
 
         case 'execution_aborted':
@@ -88,6 +95,8 @@ function handleWebSocketMessage(data) {
             document.getElementById('abort-btn').style.display = 'none';
             addLog('Wykonanie przerwane przez użytkownika', 'warning');
             alert('Wykonanie zostało przerwane');
+            // Refresh history
+            loadExecutionsHistory();
             break;
 
         case 'rate_limit_wait':
@@ -262,7 +271,18 @@ async function executeTask() {
         return;
     }
 
+    // Clear previous plan and results immediately
     stepResults = {};
+    currentPlan = null;
+    const planSection = document.getElementById('plan-section');
+    const stepsOutput = document.getElementById('steps-output');
+    const resultSection = document.getElementById('result-section');
+    const finalResult = document.getElementById('final-result');
+
+    if (planSection) planSection.style.display = 'none';
+    if (stepsOutput) stepsOutput.innerHTML = '';
+    if (resultSection) resultSection.style.display = 'none';
+    if (finalResult) finalResult.textContent = '';
 
     // Get file IDs to send
     const fileIds = uploadedFiles.map(f => f.filename);
@@ -1240,6 +1260,309 @@ Edytuj magentic-config.json aby dodać więcej szablonów!`;
     alert(info);
 }
 
+// Load executions history
+async function loadExecutionsHistory() {
+    try {
+        const response = await fetch('/api/executions');
+        const executions = await response.json();
+
+        const container = document.getElementById('executions-list');
+
+        if (executions.length === 0) {
+            container.innerHTML = '<div style="text-align: center; padding: 20px; color: #999;"><p>Brak historii wykonań</p></div>';
+            return;
+        }
+
+        container.innerHTML = '';
+
+        executions.forEach(exec => {
+            const item = document.createElement('div');
+            item.className = 'execution-item';
+            item.style.cssText = 'padding: 12px; margin-bottom: 10px; background: #f8f9fa; border-radius: 8px; cursor: pointer; border-left: 4px solid #667eea; transition: all 0.2s;';
+
+            // Truncate task for display
+            const taskPreview = exec.task.length > 50 ? exec.task.substring(0, 50) + '...' : exec.task;
+
+            // Format date
+            const date = new Date(exec.createdAt);
+            const dateStr = date.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' }) + ' ' +
+                           date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+
+            // Show steps info: executed / planned
+            const stepsInfo = exec.plannedSteps > 0
+                ? `Kroków: ${exec.stepCount}/${exec.plannedSteps}`
+                : `Kroków: ${exec.stepCount}`;
+
+            item.innerHTML = `
+                <div style="font-size: 12px; color: #667eea; font-weight: 600; margin-bottom: 5px;">${dateStr}</div>
+                <div style="font-size: 13px; margin-bottom: 5px;">${taskPreview}</div>
+                <div style="font-size: 11px; color: #666;">${stepsInfo}</div>
+            `;
+
+            item.onmouseover = () => {
+                item.style.background = '#e3f2fd';
+                item.style.transform = 'translateX(5px)';
+            };
+
+            item.onmouseout = () => {
+                item.style.background = '#f8f9fa';
+                item.style.transform = 'translateX(0)';
+            };
+
+            item.onclick = () => viewExecutionDetails(exec.id);
+
+            container.appendChild(item);
+        });
+    } catch (error) {
+        console.error('Failed to load executions:', error);
+        document.getElementById('executions-list').innerHTML =
+            '<div style="text-align: center; padding: 20px; color: #dc3545;"><p>Błąd ładowania historii</p></div>';
+    }
+}
+
+// View execution details
+async function viewExecutionDetails(executionId) {
+    try {
+        const response = await fetch(`/api/executions/${executionId}`);
+        const execution = await response.json();
+
+        // Build detailed view
+        let html = `
+            <div style="max-width: 900px; margin: 0 auto;">
+                <div style="background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h2 style="margin: 0; color: #667eea;">📄 Szczegóły Wykonania</h2>
+                        <button class="btn btn-secondary" onclick="closeExecutionDetails()">← Powrót</button>
+                    </div>
+
+                    <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                        <strong style="color: #667eea;">Zadanie:</strong>
+                        <p style="margin: 10px 0 0 0;">${execution.messages.find(m => m.role === 'user')?.content || 'N/A'}</p>
+                    </div>`;
+
+        // Show manager's plan with all steps
+        if (execution.plan) {
+            html += `
+                    <div style="margin-bottom: 20px; padding: 15px; background: #fff3cd; border-radius: 8px; border-left: 4px solid #ffc107;">
+                        <strong style="color: #856404;">📋 Plan Managera:</strong>
+                        <p style="margin: 10px 0 5px 0;"><strong>Cel:</strong> ${execution.plan.goal}</p>
+                        <p style="margin: 5px 0;"><strong>Kroków:</strong> ${execution.plan.steps.length}</p>
+                    </div>`;
+
+            // Show all planned steps
+            html += '<div style="margin-bottom: 20px;"><h3 style="color: #333; margin-bottom: 15px;">🔧 Kroki (Plan i Wykonanie):</h3>';
+
+            execution.plan.steps.forEach((plannedStep, idx) => {
+                // Find corresponding execution for this step
+                const stepExecution = execution.stepExecutions?.find(se => se.stepNumber === plannedStep.step);
+
+                let statusColor = '#e0e0e0'; // Default: not executed
+                let statusText = 'Nie wykonano';
+                let statusBg = '#6c757d';
+
+                if (stepExecution) {
+                    if (stepExecution.status === 'completed') {
+                        statusColor = '#28a745';
+                        statusText = 'Wykonano';
+                        statusBg = '#28a745';
+                    } else if (stepExecution.status === 'error') {
+                        statusColor = '#dc3545';
+                        statusText = 'Błąd';
+                        statusBg = '#dc3545';
+                    } else if (stepExecution.status === 'executing') {
+                        statusColor = '#ffc107';
+                        statusText = 'Wykonywanie';
+                        statusBg = '#ffc107';
+                    } else if (stepExecution.status === 'aborted') {
+                        statusColor = '#dc3545';
+                        statusText = 'Przerwano';
+                        statusBg = '#dc3545';
+                    }
+                }
+
+                html += `
+                    <div style="margin-bottom: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid ${statusColor};">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <strong style="color: #667eea;">Krok ${plannedStep.step}: ${plannedStep.agent}</strong>
+                            <span style="padding: 4px 10px; background: ${statusBg}; color: white; border-radius: 12px; font-size: 11px; font-weight: 600;">${statusText}</span>
+                        </div>
+                        <div style="font-size: 13px; margin-bottom: 8px;">${plannedStep.description}</div>`;
+
+                if (plannedStep.model) {
+                    html += `<div style="font-size: 12px; color: #666; margin-bottom: 8px;">Model: ${plannedStep.model}</div>`;
+                }
+
+                // If step was executed, show tool calls
+                if (stepExecution && stepExecution.toolCalls && stepExecution.toolCalls.length > 0) {
+                    html += `<div style="margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 5px; border-left: 3px solid #ffc107;">
+                                <strong style="font-size: 12px; color: #856404;">🛠️ Wywołania narzędzi (${stepExecution.toolCalls.length}):</strong>`;
+
+                    stepExecution.toolCalls.forEach((tool, idx) => {
+                        const inputStr = JSON.stringify(tool.input, null, 2);
+                        const resultStr = tool.result ? JSON.stringify(tool.result, null, 2) : null;
+
+                        html += `
+                            <div style="margin-top: 8px; padding: 8px; background: white; border-radius: 4px; border: 1px solid #ffc107;">
+                                <div style="font-weight: bold; color: #856404;">${idx + 1}. ${tool.name}</div>
+                                <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                                    <strong>Input:</strong>
+                                    <pre style="margin: 4px 0; padding: 6px; background: #f8f9fa; border-radius: 3px; overflow-x: auto; font-size: 10px; max-height: 200px;">${escapeHtml(inputStr)}</pre>
+                                </div>
+                                ${resultStr ? `
+                                <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                                    <strong>Result:</strong>
+                                    <pre style="margin: 4px 0; padding: 6px; background: #e7f5ff; border-radius: 3px; overflow-x: auto; font-size: 10px; max-height: 200px;">${escapeHtml(resultStr)}</pre>
+                                </div>
+                                ` : ''}
+                            </div>`;
+                    });
+
+                    html += '</div>';
+                }
+
+                // If step has error, show error message
+                if (stepExecution && stepExecution.error) {
+                    html += `<div style="margin-top: 10px; padding: 10px; background: #f8d7da; border-radius: 5px; border-left: 3px solid #dc3545;">
+                                <strong style="font-size: 12px; color: #721c24;">❌ Błąd:</strong>
+                                <div style="margin-top: 6px; font-size: 12px; color: #721c24; white-space: pre-wrap;">${escapeHtml(stepExecution.error)}</div>
+                            </div>`;
+                }
+
+                html += '</div>';
+            });
+
+            html += '</div>';
+        } else if (execution.stepExecutions && execution.stepExecutions.length > 0) {
+            // Fallback: show only executed steps if no plan available
+            html += '<div style="margin-bottom: 20px;"><h3 style="color: #333; margin-bottom: 15px;">🔧 Wykonane Kroki:</h3>';
+
+            execution.stepExecutions.forEach((step, idx) => {
+                const statusColor = step.status === 'completed' ? '#28a745' :
+                                   step.status === 'error' ? '#dc3545' : '#ffc107';
+
+                html += `
+                    <div style="margin-bottom: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid ${statusColor};">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <strong style="color: #667eea;">Krok ${step.stepNumber}: ${step.agent}</strong>
+                            <span style="padding: 4px 10px; background: ${statusColor}; color: white; border-radius: 12px; font-size: 11px; font-weight: 600;">${step.status}</span>
+                        </div>
+                        <div style="font-size: 13px; margin-bottom: 8px;">${step.description}</div>`;
+
+                if (step.model) {
+                    html += `<div style="font-size: 12px; color: #666; margin-bottom: 8px;">Model: ${step.model}</div>`;
+                }
+
+                if (step.toolCalls && step.toolCalls.length > 0) {
+                    html += `<div style="margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 5px; border-left: 3px solid #ffc107;">
+                                <strong style="font-size: 12px; color: #856404;">🛠️ Wywołania narzędzi (${step.toolCalls.length}):</strong>`;
+
+                    step.toolCalls.forEach((tool, idx) => {
+                        const inputStr = JSON.stringify(tool.input, null, 2);
+                        const resultStr = tool.result ? JSON.stringify(tool.result, null, 2) : null;
+
+                        html += `
+                            <div style="margin-top: 8px; padding: 8px; background: white; border-radius: 4px; border: 1px solid #ffc107;">
+                                <div style="font-weight: bold; color: #856404;">${idx + 1}. ${tool.name}</div>
+                                <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                                    <strong>Input:</strong>
+                                    <pre style="margin: 4px 0; padding: 6px; background: #f8f9fa; border-radius: 3px; overflow-x: auto; font-size: 10px; max-height: 200px;">${escapeHtml(inputStr)}</pre>
+                                </div>
+                                ${resultStr ? `
+                                <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                                    <strong>Result:</strong>
+                                    <pre style="margin: 4px 0; padding: 6px; background: #e7f5ff; border-radius: 3px; overflow-x: auto; font-size: 10px; max-height: 200px;">${escapeHtml(resultStr)}</pre>
+                                </div>
+                                ` : ''}
+                            </div>`;
+                    });
+
+                    html += '</div>';
+                }
+
+                // If step has error, show error message
+                if (step.error) {
+                    html += `<div style="margin-top: 10px; padding: 10px; background: #f8d7da; border-radius: 5px; border-left: 3px solid #dc3545;">
+                                <strong style="font-size: 12px; color: #721c24;">❌ Błąd:</strong>
+                                <div style="margin-top: 6px; font-size: 12px; color: #721c24; white-space: pre-wrap;">${escapeHtml(step.error)}</div>
+                            </div>`;
+                }
+
+                html += '</div>';
+            });
+
+            html += '</div>';
+        }
+
+        html += `
+                </div>
+            </div>`;
+
+        // Show modal or replace content
+        const mainContent = document.querySelector('#execute-tab > div > div:last-child');
+        mainContent.innerHTML = html;
+
+    } catch (error) {
+        console.error('Failed to load execution details:', error);
+        alert('Błąd ładowania szczegółów wykonania');
+    }
+}
+
+// Close execution details
+function closeExecutionDetails() {
+    location.reload(); // Simple way to restore the original view
+}
+
+// Load manager prompt from config
+async function loadManagerPrompt() {
+    try {
+        const response = await fetch('/api/manager/prompt');
+        const data = await response.json();
+
+        if (data.prompt) {
+            document.getElementById('manager-prompt').value = data.prompt;
+            addLog('Loaded manager prompt from config', 'success');
+        } else {
+            document.getElementById('manager-prompt').value = '';
+            addLog('No manager prompt found in config', 'warning');
+        }
+    } catch (error) {
+        console.error('Failed to load manager prompt:', error);
+        addLog(`Error loading manager prompt: ${error.message}`, 'error');
+    }
+}
+
+// Save manager prompt to config
+async function saveManagerPrompt() {
+    const promptText = document.getElementById('manager-prompt').value.trim();
+
+    if (!promptText) {
+        alert('Manager prompt cannot be empty');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/manager/prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: promptText })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            addLog('Manager prompt saved to magentic-config.json', 'success');
+            alert('✅ Manager prompt saved successfully!\n\n⚠️ Restart the server for changes to take effect:\nnpm run ui');
+        } else {
+            addLog(`Error saving manager prompt: ${result.error}`, 'error');
+            alert(`Error: ${result.error}`);
+        }
+    } catch (error) {
+        console.error('Failed to save manager prompt:', error);
+        addLog(`Error saving manager prompt: ${error.message}`, 'error');
+        alert(`Error: ${error.message}`);
+    }
+}
+
 // Initialize application
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize WebSocket
@@ -1248,11 +1571,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load initial data
     addLog('Application initialized', 'success');
 
-    // Load Ollama prompts when config tab is opened
+    // Load executions history
+    loadExecutionsHistory();
+
+    // Load Ollama prompts and Manager prompt when config tab is opened
     const configTab = document.querySelector('[onclick*="config"]');
     if (configTab) {
         configTab.addEventListener('click', () => {
             setTimeout(loadOllamaPrompts, 100);
+            setTimeout(loadManagerPrompt, 100);
         });
     }
 });

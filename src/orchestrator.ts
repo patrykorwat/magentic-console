@@ -22,6 +22,7 @@ export interface OrchestratorConfig {
   geminiConfig?: Partial<AgentConfig>;
   ollamaConfig?: Partial<AgentConfig>;
   ollamaBaseUrl?: string;
+  managerPrompt?: string;
 }
 
 /**
@@ -38,9 +39,14 @@ export class MagenticOrchestrator {
   public currentStepToolCalls: Array<{ id: string; name: string; input: Record<string, any>; result?: any }> = [];
 
   constructor(private config: OrchestratorConfig) {
-    // Initialize Manager Agent with default Claude model from config
+    // Initialize Manager Agent with default Claude model from config and MCP servers
     const defaultClaudeModel = config.claudeConfig?.model || 'claude-sonnet-4-5-20250929';
-    this.manager = new ManagerAgent(config.anthropicApiKey, defaultClaudeModel);
+    this.manager = new ManagerAgent(
+      config.anthropicApiKey,
+      defaultClaudeModel,
+      config.managerPrompt,
+      config.mcpServers || []
+    );
 
     // Initialize Claude Agent with cross-agent tools and MCP support
     this.claude = new ClaudeAgent(
@@ -78,6 +84,10 @@ export class MagenticOrchestrator {
    */
   async initialize(): Promise<void> {
     console.log('[Orchestrator] Initializing...');
+
+    // Initialize Manager MCP for schema fetching
+    await this.manager.initializeMCP();
+
     await this.claude.initializeMCP();
 
     // Initialize Ollama MCP if configured
@@ -100,6 +110,10 @@ export class MagenticOrchestrator {
    */
   async cleanup(): Promise<void> {
     console.log('[Orchestrator] Cleaning up...');
+
+    // Cleanup Manager MCP
+    await this.manager.closeMCP();
+
     await this.claude.closeMCP();
 
     // Cleanup Ollama MCP if configured
@@ -508,6 +522,7 @@ export class MagenticOrchestrator {
 
       for (const toolCall of response.toolCalls) {
         console.log(`[Ollama] Tool call: ${toolCall.name}`);
+        console.log(`[Ollama] Tool input:`, JSON.stringify(toolCall.input, null, 2));
 
         let toolResult: any;
 
@@ -521,7 +536,9 @@ export class MagenticOrchestrator {
           toolResult = await this.executeWithClaude(claudeTask);
         } else if (toolCall.name.startsWith('mcp_')) {
           // Execute MCP tool through Ollama agent
+          console.log(`[Ollama] Executing MCP tool: ${toolCall.name}`);
           toolResult = await this.ollama.executeMCPTool(toolCall.name, toolCall.input);
+          console.log(`[Ollama] MCP tool result:`, JSON.stringify(toolResult).substring(0, 500));
         } else {
           toolResult = { error: `Unknown tool: ${toolCall.name}` };
         }

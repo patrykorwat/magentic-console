@@ -472,37 +472,51 @@
         </div>
 
         <div class="tabs">
-            <div class="tab active" onclick="switchTab('execute')">🚀 Wykonaj Zadanie</div>
+            <div class="tab active" onclick="switchTab('execute')">🚀 Badanie</div>
             <div class="tab" onclick="switchTab('agents')">🤖 Agenci</div>
             <div class="tab" onclick="switchTab('config')">⚙️ Konfiguracja</div>
-            <div class="tab" onclick="switchTab('history')">📚 Historia</div>
-            <div class="tab" onclick="switchTab('logs')">📊 Aktywność</div>
+            <div class="tab" onclick="switchTab('logs')">📊 Logi</div>
         </div>
 
         <!-- Execute Task Tab -->
         <div id="execute-tab" class="tab-content active">
-            <div class="card">
-                <h2>Wykonaj Zadanie z Planowaniem</h2>
-                <div class="form-group">
-                    <label>Opis Zadania</label>
-                    <textarea id="task-input" placeholder="Opisz swoje zadanie... Manager utworzy plan i go wykona."></textarea>
+            <div style="display: flex; gap: 20px;">
+                <!-- Historia wykonań (lewa kolumna) -->
+                <div style="width: 300px; flex-shrink: 0;">
+                    <div class="card" style="height: 100%; max-height: 800px; display: flex; flex-direction: column;">
+                        <h2 style="margin-bottom: 15px;">📜 Historia</h2>
+                        <div id="executions-list" style="flex: 1; overflow-y: auto;">
+                            <div style="text-align: center; padding: 20px; color: #999;">
+                                <p>Ładowanie historii...</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div id="uploaded-files-display-task" style="padding: 10px; background: #f0f0f0; border-radius: 5px; margin-bottom: 10px; display: none;">
-                    <strong>Załączone pliki:</strong>
-                    <div id="files-list-task"></div>
-                </div>
-                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn" onclick="executeTask()" id="execute-btn">
-                        <span id="execute-btn-text">Utwórz Plan i Wykonaj</span>
-                        <span id="execute-spinner" class="spinner" style="display: none; margin-left: 10px;"></span>
-                    </button>
-                    <label class="btn btn-secondary" style="cursor: pointer; margin: 0;">
-                        📎 Pliki
-                        <input type="file" id="file-input-task" multiple style="display: none;" onchange="handleFileUpload(event)">
-                    </label>
-                    <button class="btn btn-danger" id="abort-btn" onclick="abortExecution()" style="display: none;">⏹ Zatrzymaj</button>
-                </div>
-            </div>
+
+                <!-- Główna zawartość (prawa kolumna) -->
+                <div style="flex: 1; min-width: 0;">
+                    <div class="card">
+                        <h2>Wykonaj Zadanie z Planowaniem</h2>
+                        <div class="form-group">
+                            <label>Opis Zadania</label>
+                            <textarea id="task-input" placeholder="Opisz swoje zadanie... Manager utworzy plan i go wykona."></textarea>
+                        </div>
+                        <div id="uploaded-files-display-task" style="padding: 10px; background: #f0f0f0; border-radius: 5px; margin-bottom: 10px; display: none;">
+                            <strong>Załączone pliki:</strong>
+                            <div id="files-list-task"></div>
+                        </div>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button class="btn" onclick="executeTask()" id="execute-btn">
+                                <span id="execute-btn-text">Utwórz Plan i Wykonaj</span>
+                                <span id="execute-spinner" class="spinner" style="display: none; margin-left: 10px;"></span>
+                            </button>
+                            <label class="btn btn-secondary" style="cursor: pointer; margin: 0;">
+                                📎 Pliki
+                                <input type="file" id="file-input-task" multiple style="display: none;" onchange="handleFileUpload(event)">
+                            </label>
+                            <button class="btn btn-danger" id="abort-btn" onclick="abortExecution()" style="display: none;">⏹ Zatrzymaj</button>
+                        </div>
+                    </div>
 
             <!-- Real-time execution output -->
             <div class="card" id="execution-output" style="display: none;">
@@ -525,6 +539,8 @@
                         </div>
                     </div>
                     <div class="output-text" id="final-result"></div>
+                </div>
+            </div>
                 </div>
             </div>
         </div>
@@ -665,23 +681,32 @@ MCP_SERVERS='[{"name":"filesystem","command":"npx","args":["-y","@modelcontextpr
                 </div>
             </div>
 
+            <!-- Manager Prompt Configuration -->
+            <div class="card" style="margin-top: 20px;">
+                <h2>Manager Agent Prompt</h2>
+                <p style="color: #666; margin-bottom: 15px;">System prompt for the Manager Agent that plans and orchestrates tasks between Claude, Gemini, and Ollama.</p>
+
+                <div class="form-group">
+                    <label>Manager System Prompt <small style="color: #666;">(Edit and save to magentic-config.json)</small></label>
+                    <textarea id="manager-prompt" rows="15" style="width: 100%; padding: 10px; font-family: monospace; font-size: 12px; border: 1px solid #ddd; border-radius: 4px;" placeholder="Loading manager prompt..."></textarea>
+                    <div style="margin-top: 10px; display: flex; gap: 10px;">
+                        <button class="btn btn-secondary" onclick="loadManagerPrompt()" style="flex: 1; padding: 8px;">
+                            🔄 Reload from Config
+                        </button>
+                        <button class="btn" onclick="saveManagerPrompt()" style="flex: 2; padding: 8px;">
+                            💾 Save to magentic-config.json
+                        </button>
+                    </div>
+                </div>
+
+                <div style="margin-top: 15px; padding: 10px; background: #fff3cd; border-radius: 4px; font-size: 13px;">
+                    <strong>⚠️ Important:</strong> Changes take effect after server restart. Use <code>npm run ui</code> to restart.
+                </div>
+            </div>
+
             <div class="card" style="margin-top: 20px;">
                 <button class="btn" onclick="saveConfig()" style="width: 100%; font-size: 18px; padding: 16px;">💾 Save Model Configuration</button>
                 <p style="margin-top: 10px; color: #666; text-align: center; font-size: 14px;">Saves Claude, Gemini, and Ollama settings to magentic-config.json</p>
-            </div>
-        </div>
-
-        <!-- History Tab -->
-        <div id="history-tab" class="tab-content">
-            <div class="card">
-                <h2>📚 Historia Wykonań</h2>
-                <p style="color: #666; margin-bottom: 20px;">Przeglądaj poprzednie wykonania zadań</p>
-                <div id="executions-list">
-                    <div style="text-align: center; padding: 40px; color: #999;">
-                        <div class="spinner spinner-large" style="margin: 0 auto 20px;"></div>
-                        <p>Ładowanie historii...</p>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -695,6 +720,6 @@ MCP_SERVERS='[{"name":"filesystem","command":"npx","args":["-y","@modelcontextpr
         </div>
     </div>
 
-    <script src="app.js?v=20260202-1100"></script>
+    <script src="app.js?v=20260205-1712"></script>
 </body>
 </html>
