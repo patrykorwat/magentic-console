@@ -2,6 +2,7 @@ import { ClaudeAgent } from './agents/claude-agent.js';
 import { GeminiAgent } from './agents/gemini-agent.js';
 import { ManagerAgent } from './agents/manager-agent.js';
 import { OllamaAgent } from './agents/ollama-agent.js';
+import { MLXAgent } from './agents/mlx-agent.js';
 import {
   Message,
   ToolCall,
@@ -22,18 +23,21 @@ export interface OrchestratorConfig {
   geminiConfig?: Partial<AgentConfig>;
   ollamaConfig?: Partial<AgentConfig>;
   ollamaBaseUrl?: string;
+  mlxConfig?: Partial<AgentConfig>;
+  mlxBaseUrl?: string;
   managerPrompt?: string;
 }
 
 /**
  * Magentic Orchestrator
- * Coordinates between Manager, Claude, Gemini, and Ollama agents
+ * Coordinates between Manager, Claude, Gemini, Ollama, and MLX agents
  */
 export class MagenticOrchestrator {
   private manager: ManagerAgent;
   private claude: ClaudeAgent;
   private gemini: GeminiAgent;
   private ollama: OllamaAgent | null = null;
+  private mlx: MLXAgent | null = null;
   private conversationHistory: Message[] = [];
   public aborted: boolean = false;
   public currentStepToolCalls: Array<{ id: string; name: string; input: Record<string, any>; result?: any }> = [];
@@ -77,6 +81,18 @@ export class MagenticOrchestrator {
         config.mcpServers || []
       );
     }
+
+    // Initialize MLX Agent if configured (with MCP support)
+    if (config.mlxConfig || config.mlxBaseUrl) {
+      this.mlx = new MLXAgent(
+        {
+          name: 'MLX',
+          ...config.mlxConfig,
+        },
+        config.mlxBaseUrl,
+        config.mcpServers || []
+      );
+    }
   }
 
   /**
@@ -93,6 +109,11 @@ export class MagenticOrchestrator {
     // Initialize Ollama MCP if configured
     if (this.ollama) {
       await this.ollama.initializeMCP();
+    }
+
+    // Initialize MLX MCP if configured
+    if (this.mlx) {
+      await this.mlx.initializeMCP();
     }
 
     console.log('[Orchestrator] Initialized successfully');
@@ -119,6 +140,11 @@ export class MagenticOrchestrator {
     // Cleanup Ollama MCP if configured
     if (this.ollama) {
       await this.ollama.closeMCP();
+    }
+
+    // Cleanup MLX MCP if configured
+    if (this.mlx) {
+      await this.mlx.closeMCP();
     }
 
     console.log('[Orchestrator] Cleanup complete');
@@ -179,6 +205,13 @@ export class MagenticOrchestrator {
             this.ollama.setModel(step.model);
           }
           result = await this.executeWithOllama(step.description);
+          break;
+        case 'mlx':
+          // Set MLX model if specified in step
+          if (step.model && this.mlx) {
+            this.mlx.setModel(step.model);
+          }
+          result = await this.executeWithMLX(step.description);
           break;
         case 'manager':
           result = await this.executeWithManager(step.description);
@@ -593,9 +626,156 @@ export class MagenticOrchestrator {
   }
 
   /**
+   * Execute a task with MLX agent (with tool handling)
+   */
+  async executeWithMLX(task: string, files?: FileAttachment[]): Promise<string> {
+    // Check if MLX is configured
+    if (!this.mlx) {
+      throw new Error('MLX agent is not configured. Add mlxConfig or mlxBaseUrl to orchestrator config.');
+    }
+
+    // Check for abort at the start
+    if (this.aborted) {
+      throw new Error('Execution aborted by user');
+    }
+
+    // Execute MLX with automatic tool handling (similar to Ollama)
+    const result = await this.executeMLXWithToolHandling(task, files);
+    return result;
+  }
+
+  /**
+   * Execute MLX with automatic tool handling
+   */
+  private async executeMLXWithToolHandling(task: string, files?: FileAttachment[]): Promise<string> {
+    if (!this.mlx) {
+      throw new Error('MLX agent is not configured.');
+    }
+
+    const messages: Message[] = [{ role: 'user', content: task, files }];
+    let toolCallIterations = 0;
+    const MAX_TOOL_ITERATIONS = 20;
+    let allToolCallsHistory: Array<{iteration: number, calls: Array<{name: string, input: any, result: any}>}> = [];
+
+    while (true) {
+      // Check for abort
+      if (this.aborted) {
+        throw new Error('Execution aborted by user');
+      }
+
+      // Prevent infinite loops
+      if (toolCallIterations >= MAX_TOOL_ITERATIONS) {
+        throw new Error(`Maximum tool call iterations (${MAX_TOOL_ITERATIONS}) exceeded. Task may be too complex or model is stuck in a loop.`);
+      }
+
+      console.log(`[Orchestrator] MLX iteration ${toolCallIterations + 1}: Calling with ${messages.length} messages`);
+
+      // Get response from MLX
+      const response = await this.mlx.execute(messages);
+
+      // If no tool calls, we're done - return formatted result with history
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        // Format final response with tool calls history
+        if (allToolCallsHistory.length > 0) {
+          let formattedResponse = '';
+          for (const iter of allToolCallsHistory) {
+            formattedResponse += `\n=== Iteration ${iter.iteration} - Executed Tools ===\n`;
+            for (const call of iter.calls) {
+              formattedResponse += `\n🛠️ ${call.name}\n`;
+              formattedResponse += `Input: ${JSON.stringify(call.input, null, 2)}\n`;
+              formattedResponse += `Result: ${JSON.stringify(call.result, null, 2)}\n`;
+            }
+          }
+          formattedResponse += `\n=== Final LLM Response ===\n${response.content}`;
+          return formattedResponse;
+        }
+        return response.content;
+      }
+
+      // We have tool calls - increment counter and process them
+      toolCallIterations++;
+      console.log(`[Orchestrator] Processing ${response.toolCalls.length} tool call(s) from MLX (iteration ${toolCallIterations})`);
+
+      // Execute all tool calls
+      const toolResults: ToolResult[] = [];
+      const currentIterationCalls: Array<{name: string, input: any, result: any}> = [];
+
+      for (const toolCall of response.toolCalls) {
+        console.log(`[MLX] Tool call: ${toolCall.name}`);
+        console.log(`[MLX] Tool input:`, JSON.stringify(toolCall.input, null, 2));
+
+        let toolResult: any;
+
+        if (toolCall.name === 'invoke_gemini') {
+          const geminiTask = toolCall.input.task as string;
+          const context = toolCall.input.context as string | undefined;
+          const fullTask = context ? `${geminiTask}\n\nContext: ${context}` : geminiTask;
+          toolResult = await this.executeWithGemini(fullTask);
+        } else if (toolCall.name === 'invoke_claude') {
+          const claudeTask = toolCall.input.task as string;
+          toolResult = await this.executeWithClaude(claudeTask);
+        } else if (toolCall.name.startsWith('mcp_')) {
+          // Execute MCP tool through MLX agent
+          console.log(`[MLX] Executing MCP tool: ${toolCall.name}`);
+          toolResult = await this.mlx.executeMCPTool(toolCall.name, toolCall.input);
+          console.log(`[MLX] MCP tool result:`, JSON.stringify(toolResult).substring(0, 500));
+        } else {
+          toolResult = { error: `Unknown tool: ${toolCall.name}` };
+        }
+
+        // Track tool call for history
+        currentIterationCalls.push({
+          name: toolCall.name,
+          input: toolCall.input,
+          result: toolResult
+        });
+
+        // Track tool call for UI
+        this.currentStepToolCalls.push({
+          id: toolCall.id,
+          name: toolCall.name,
+          input: toolCall.input,
+          result: toolResult
+        });
+
+        toolResults.push({
+          toolCallId: toolCall.id,
+          output: toolResult,
+        });
+      }
+
+      // Save this iteration's tool calls to history
+      allToolCallsHistory.push({
+        iteration: toolCallIterations,
+        calls: currentIterationCalls
+      });
+
+      // Add assistant's response to messages
+      messages.push({
+        role: 'assistant',
+        content: response.content
+      });
+
+      // Add tool results as user message
+      const toolResultsText = toolResults
+        .map((tr) => `Tool ${tr.toolCallId} (${response.toolCalls?.find(tc => tc.id === tr.toolCallId)?.name}) result:\n${JSON.stringify(tr.output, null, 2)}`)
+        .join('\n\n');
+
+      messages.push({
+        role: 'user',
+        content: `Tool results:\n\n${toolResultsText}\n\nAnalyze the results and continue the task.`
+      });
+
+      console.log(`[Orchestrator] Messages array now has ${messages.length} messages`);
+
+      // Loop continues - next iteration will call MLX with updated messages
+    }
+  }
+
+  /**
    * Direct chat with a specific agent
    */
-  async chat(message: string, agent: 'claude' | 'gemini' | 'manager' | 'ollama' = 'claude'): Promise<string> {
+  async chat(message: string, agent: 'claude' | 'gemini' | 'manager' | 'ollama' | 'mlx' = 'claude'): Promise<string> {
     this.conversationHistory.push({ role: 'user', content: message });
 
     let response: string;
@@ -611,6 +791,9 @@ export class MagenticOrchestrator {
         break;
       case 'ollama':
         response = await this.executeWithOllama(message);
+        break;
+      case 'mlx':
+        response = await this.executeWithMLX(message);
         break;
     }
 

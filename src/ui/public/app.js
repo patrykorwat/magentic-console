@@ -644,6 +644,19 @@ async function loadConfig() {
         document.getElementById('ollama-tokens').value = config.ollamaConfig.maxTokens;
         document.getElementById('ollama-prompt').value = config.ollamaConfig.customPrompt || '';
 
+        // MLX config
+        if (config.mlxConfig) {
+            document.getElementById('mlx-model').value = config.mlxConfig.model || 'mlx-community/Llama-3.2-3B-Instruct-4bit';
+            document.getElementById('mlx-temp').value = config.mlxConfig.temperature;
+            document.getElementById('mlx-tokens').value = config.mlxConfig.maxTokens;
+            document.getElementById('mlx-prompt').value = config.mlxConfig.customPrompt || '';
+        }
+        if (config.mlxBaseUrl) {
+            document.getElementById('mlx-base-url').value = config.mlxBaseUrl;
+            // Update start command with correct port and model
+            updateMLXStartCommand();
+        }
+
         addLog('Loaded model configuration from backend', 'success');
     } catch (error) {
         addLog(`Error loading config: ${error.message}`, 'error');
@@ -686,6 +699,7 @@ async function saveConfig() {
     const claudePrompt = document.getElementById('claude-prompt').value.trim();
     const geminiPrompt = document.getElementById('gemini-prompt').value.trim();
     const ollamaPrompt = document.getElementById('ollama-prompt').value.trim();
+    const mlxPrompt = document.getElementById('mlx-prompt').value.trim();
 
     const config = {
         claudeConfig: {
@@ -706,6 +720,13 @@ async function saveConfig() {
             maxTokens: parseInt(document.getElementById('ollama-tokens').value),
             customPrompt: ollamaPrompt || undefined,
         },
+        mlxConfig: {
+            model: document.getElementById('mlx-model').value,
+            temperature: parseFloat(document.getElementById('mlx-temp').value),
+            maxTokens: parseInt(document.getElementById('mlx-tokens').value),
+            customPrompt: mlxPrompt || undefined,
+        },
+        mlxBaseUrl: document.getElementById('mlx-base-url').value,
     };
 
     try {
@@ -1563,6 +1584,27 @@ async function saveManagerPrompt() {
     }
 }
 
+// Update MLX start command with current config
+function updateMLXStartCommand() {
+    const model = document.getElementById('mlx-model')?.value || 'mlx-community/Llama-3.2-3B-Instruct-4bit';
+    const baseUrl = document.getElementById('mlx-base-url')?.value || 'http://localhost:8080';
+
+    // Extract port from URL
+    let port = '8080';
+    try {
+        const url = new URL(baseUrl);
+        port = url.port || '8080';
+    } catch (e) {
+        // Invalid URL, use default
+    }
+
+    const command = `mlx_lm.server --model ${model} --port ${port}`;
+    const commandElement = document.getElementById('mlx-start-command');
+    if (commandElement) {
+        commandElement.textContent = command;
+    }
+}
+
 // Initialize application
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize WebSocket
@@ -1581,5 +1623,16 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(loadOllamaPrompts, 100);
             setTimeout(loadManagerPrompt, 100);
         });
+    }
+
+    // Update MLX command when model or URL changes
+    const mlxModelInput = document.getElementById('mlx-model');
+    const mlxBaseUrlInput = document.getElementById('mlx-base-url');
+
+    if (mlxModelInput) {
+        mlxModelInput.addEventListener('input', updateMLXStartCommand);
+    }
+    if (mlxBaseUrlInput) {
+        mlxBaseUrlInput.addEventListener('input', updateMLXStartCommand);
     }
 });

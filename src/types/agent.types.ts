@@ -102,8 +102,8 @@ export interface Agent {
 export interface PlanStep {
   step: number;
   description: string;
-  agent: 'claude' | 'gemini' | 'ollama' | 'manager';
-  model?: string; // Konkretny model dla tego kroku (np. 'claude-3-5-haiku-20241022' dla Claude, 'llama3.2' dla Ollama)
+  agent: 'claude' | 'gemini' | 'ollama' | 'mlx' | 'manager';
+  model?: string; // Konkretny model dla tego kroku (np. 'claude-3-5-haiku-20241022' dla Claude, 'llama3.2' dla Ollama, 'mlx-community/Llama-3.2-3B-Instruct-4bit' dla MLX)
   reasoning: string;
   requiredFiles?: string[]; // Lista nazw plików potrzebnych w tym kroku
 }

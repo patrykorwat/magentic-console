@@ -132,6 +132,13 @@ let config = {
     customPrompt: undefined as string | undefined,
   },
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+  mlxConfig: {
+    model: 'mlx-community/Llama-3.2-3B-Instruct-4bit',
+    temperature: 0.7,
+    maxTokens: 4096,
+    customPrompt: undefined as string | undefined,
+  },
+  mlxBaseUrl: process.env.MLX_BASE_URL || 'http://localhost:8080',
 };
 
 let orchestrator: MagenticOrchestrator | null = null;
@@ -237,6 +244,17 @@ async function loadConfigFromFile() {
       config.ollamaBaseUrl = ollamaConfig.ollamaBaseUrl;
     }
 
+    if (ollamaConfig.mlxConfig) {
+      config.mlxConfig = {
+        ...config.mlxConfig,
+        ...ollamaConfig.mlxConfig,
+      };
+    }
+
+    if (ollamaConfig.mlxBaseUrl) {
+      config.mlxBaseUrl = ollamaConfig.mlxBaseUrl;
+    }
+
     console.log('✓ Loaded model configuration from magentic-config.json');
     return true;
   } catch (error) {
@@ -268,6 +286,13 @@ async function saveConfigToFile() {
         customPrompt: config.ollamaConfig.customPrompt,
       },
       ollamaBaseUrl: config.ollamaBaseUrl,
+      mlxConfig: {
+        model: config.mlxConfig.model,
+        temperature: config.mlxConfig.temperature,
+        maxTokens: config.mlxConfig.maxTokens,
+        customPrompt: config.mlxConfig.customPrompt,
+      },
+      mlxBaseUrl: config.mlxBaseUrl,
       savedAt: new Date().toISOString(),
     };
 
@@ -468,6 +493,8 @@ async function initOrchestrator() {
     geminiConfig: config.geminiConfig,
     ollamaConfig: config.ollamaConfig,
     ollamaBaseUrl: config.ollamaBaseUrl,
+    mlxConfig: config.mlxConfig,
+    mlxBaseUrl: config.mlxBaseUrl,
     managerPrompt,
   });
 
@@ -673,6 +700,9 @@ app.post('/api/config', async (req, res) => {
     if (updates.ollamaConfig) {
       config.ollamaConfig = { ...config.ollamaConfig, ...updates.ollamaConfig };
     }
+    if (updates.mlxConfig) {
+      config.mlxConfig = { ...config.mlxConfig, ...updates.mlxConfig };
+    }
 
     // Save model configuration to file
     await saveConfigToFile();
@@ -828,6 +858,25 @@ app.get('/api/agents', (req, res) => {
       ],
       description: 'Local open-source model running offline (free)',
       tools: orchestrator['ollama'].getTools().map((t) => t.name),
+    });
+  }
+
+  // Add MLX if configured
+  if (orchestrator['mlx']) {
+    agents.push({
+      name: 'MLX',
+      model: config.mlxConfig.model,
+      capabilities: [
+        'local_inference',
+        'privacy_focused',
+        'offline_capable',
+        'apple_silicon_optimized',
+        'neural_accelerator',
+        'quick_analysis',
+        'cost_free',
+      ],
+      description: 'Apple Silicon-optimized model with neural accelerator (free)',
+      tools: orchestrator['mlx'].getTools().map((t) => t.name),
     });
   }
 
@@ -1191,6 +1240,14 @@ app.post('/api/execute', async (req, res) => {
             break;
           case 'ollama':
             result = await orchestrator['executeWithOllama'](stepTask, stepFiles.length > 0 ? stepFiles : undefined);
+            break;
+          case 'mlx':
+            // Set MLX model if specified in plan step
+            if (step.model && orchestrator['mlx']) {
+              console.log(`[Server] Step ${step.step}: Setting MLX model to ${step.model}`);
+              orchestrator['mlx'].setModel(step.model);
+            }
+            result = await orchestrator['executeWithMLX'](stepTask, stepFiles.length > 0 ? stepFiles : undefined);
             break;
           case 'manager':
             result = await orchestrator['executeWithManager'](stepTask);

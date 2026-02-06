@@ -380,25 +380,34 @@ ${claudeModelsSection}
 
 ${ollamaModelsSection}
 
+4. Agent MLX - Lokalny model zoptymalizowany dla Apple Silicon (M1/M2/M3/M4/M5) z akceleratorami neuronowymi. DARMOWY, działa OFFLINE z najwyższą wydajnością na Mac. MA PEŁNY DOSTĘP DO NARZĘDZI MCP. Używaj gdy użytkownik ma Apple Silicon i potrzebuje najszybszego lokalnego rozumowania.
+
+   Dostępne modele MLX (DARMOWE - zoptymalizowane dla Apple Silicon):
+   * mlx-community/Llama-3.2-3B-Instruct-4bit - Szybki model 3B (REKOMENDOWANY dla większości zadań)
+   * mlx-community/Qwen2.5-7B-Instruct-4bit - Mocniejszy model 7B
+   * mlx-community/Mistral-7B-Instruct-v0.3-4bit - Silny w rozumowaniu logicznym
+
 WAŻNE ZASADY WYBORU AGENTA I MODELU:
 - Jeśli zadanie wymaga CZYTANIA/ANALIZY PLIKÓW PDF → ZAWSZE wybierz Claude (tylko Claude obsługuje PDF)
   * Prosta ekstrakcja tekstu z PDF → ${newestHaiku?.id || 'Haiku'} (najtańszy)
   * Analiza zawartości PDF, wyciąganie wniosków → ${newestSonnet?.id || 'Sonnet'} (średnio drogi)
   * Głęboka analiza wielu PDF, skomplikowana synteza → ${newestOpus?.id || 'Opus'} (najdroższy, tylko gdy konieczne)
-- Jeśli zadanie wymaga OPERACJI Z BAZĄ DANYCH przez MCP → wybierz Claude LUB Ollama (oba mają MCP)
-  * Bardzo proste zapytania (pojedyncze rekordy, podstawowy odczyt) → Ollama z ${recommendedOllama?.id || 'qwen2.5:7b'} (DARMOWY!)
-  * Średnio złożone (podstawowe filtry, proste agregacje) → ${newestHaiku?.id || 'Haiku'} (tani)
+- Jeśli zadanie wymaga OPERACJI Z BAZĄ DANYCH przez MCP → wybierz Claude, MLX LUB Ollama (wszystkie mają MCP)
+  * Bardzo proste zapytania (pojedyncze rekordy, podstawowy odczyt) → MLX lub Ollama (DARMOWE, lokalne!)
+  * Średnio złożone (podstawowe filtry, proste agregacje) → MLX (najszybszy na Apple Silicon) lub ${newestHaiku?.id || 'Haiku'} (tani)
   * Złożone zapytania (wieloetapowe, agregacje, analiza) → ${newestSonnet?.id || 'Sonnet'} (drogi)
-- Jeśli zadanie wymaga PROSTEJ analizy tekstu BEZ złożonego rozumowania → użyj Ollama (darmowy, lokalny)
-- Jeśli zadanie wymaga KODOWANIA → Ollama z ${ollamaModels.find(m => m.id.includes('coder'))?.id || 'qwen2.5-coder:7b'} LUB Claude
-- Jeśli zadanie wymaga podsumowania TEKSTU z poprzednich kroków → użyj Gemini lub Ollama (tanie opcje)
-- Gemini i Ollama NIE MOGĄ otrzymywać plików w requiredFiles - tylko Claude!
+- Jeśli zadanie wymaga PROSTEJ analizy tekstu BEZ złożonego rozumowania → użyj MLX lub Ollama (darmowe, lokalne)
+- Jeśli zadanie wymaga KODOWANIA → MLX, Ollama z ${ollamaModels.find(m => m.id.includes('coder'))?.id || 'qwen2.5-coder:7b'} LUB Claude
+- Jeśli zadanie wymaga podsumowania TEKSTU z poprzednich kroków → użyj Gemini, MLX lub Ollama (tanie/darmowe opcje)
+- Jeśli użytkownik ma Apple Silicon (Mac M1/M2/M3/M4/M5) → preferuj MLX dla najlepszej wydajności lokalnej
+- Gemini, Ollama i MLX NIE MOGĄ otrzymywać plików w requiredFiles - tylko Claude!
 
 OPTYMALIZACJA KOSZTÓW - zawsze preferuj tańsze rozwiązania:
-1. Ollama (DARMOWY) > Gemini > ${newestHaiku?.id || 'Haiku'} > ${newestSonnet?.id || 'Sonnet'} ${newestOpus ? `> ${newestOpus.id}` : ''} (od najtańszego do najdroższego)
+1. MLX (DARMOWY, najszybszy na Apple Silicon) = Ollama (DARMOWY) > Gemini > ${newestHaiku?.id || 'Haiku'} > ${newestSonnet?.id || 'Sonnet'} ${newestOpus ? `> ${newestOpus.id}` : ''} (od najtańszego do najdroższego)
 2. Używaj ${newestSonnet?.id || 'Sonnet'} tylko gdy zadanie naprawdę wymaga zaawansowanego rozumowania
-3. Większość prostych zadań można wykonać Ollama (lokalne, darmowe)
-4. Używaj Gemini/${newestHaiku?.id || 'Haiku'} gdy Ollama nie wystarcza
+3. Większość prostych zadań można wykonać MLX lub Ollama (lokalne, darmowe)
+4. Używaj Gemini/${newestHaiku?.id || 'Haiku'} gdy MLX/Ollama nie wystarczają
+5. Na Apple Silicon (Mac M-series) preferuj MLX dla najlepszej wydajności
 
 Twoje zadania:
 1. Analizowanie zapytań użytkownika
@@ -408,13 +417,13 @@ Twoje zadania:
 
 Podczas tworzenia planu:
 - Rozbij złożone zadania na jasne kroki
-- Przypisz każdy krok do najbardziej odpowiedniego agenta (claude, gemini, ollama lub manager)
+- Przypisz każdy krok do najbardziej odpowiedniego agenta (claude, gemini, ollama, mlx lub manager)
 - Podaj uzasadnienie dla każdego przypisania (reasoning musi być PO POLSKU)
 - Oszacuj złożoność (low, medium, high)
 
 WAŻNE - LIMITY WYNIKÓW NARZĘDZI MCP:
-- Gdy Claude/Ollama używa narzędzi MCP (bazy danych), wyniki są automatycznie skracane do 10,000 znaków aby nie przekroczyć limitu kontekstu
-- W opisie zadania dla Claude/Ollama ZAWSZE dodaj instrukcję: "Używaj precyzyjnych zapytań z filtrami (WHERE, LIMIT). Pobieraj tylko niezbędne dane, nie całą bazę."
+- Gdy Claude/Ollama/MLX używa narzędzi MCP (bazy danych), wyniki są automatycznie skracane do 10,000 znaków aby nie przekroczyć limitu kontekstu
+- W opisie zadania dla Claude/Ollama/MLX ZAWSZE dodaj instrukcję: "Używaj precyzyjnych zapytań z filtrami (WHERE, LIMIT). Pobieraj tylko niezbędne dane, nie całą bazę."
 - Jeśli zadanie wymaga analizy dużej ilości danych, podziel je na mniejsze kroki z konkretnymi filtrami/limitami
 - Przykład DOBRY: "Znajdź top 10 rekordów spełniających warunek X (użyj WHERE, ORDER BY, LIMIT 10)"
 - Przykład ZŁY: "Pobierz wszystkie rekordy z bazy" (może zwrócić tysiące rekordów i przekroczyć limit kontekstu)
@@ -428,8 +437,8 @@ Zwróć plan w formacie JSON:
     {
       "step": 1,
       "description": "Co należy zrobić",
-      "agent": "claude|gemini|ollama|manager",
-      "model": "${claudeModelIds || 'claude'}|${ollamaModelIds || 'ollama'}", // OPCJONALNE - dla Claude/Ollama, wybierz najbardziej odpowiedni model!
+      "agent": "claude|gemini|ollama|mlx|manager",
+      "model": "${claudeModelIds || 'claude'}|${ollamaModelIds || 'ollama'}|mlx-community/Llama-3.2-3B-Instruct-4bit|mlx-community/Qwen2.5-7B-Instruct-4bit|mlx-community/Mistral-7B-Instruct-v0.3-4bit", // OPCJONALNE - dla Claude/Ollama/MLX, wybierz najbardziej odpowiedni model!
       "reasoning": "Dlaczego ten agent i model są najlepiej dopasowane - PO POLSKU (wyjaśnij wybór agenta i modelu, np: Ollama ${recommendedOllama?.id || 'qwen2.5:7b'} dla prostego zapytania do bazy, ${newestSonnet?.id || 'Sonnet'} dla złożonej analizy)",
       "requiredFiles": ["nazwa_pliku.pdf"] // OPCJONALNE - tylko jeśli krok wymaga konkretnych plików (tylko Claude!)
     }

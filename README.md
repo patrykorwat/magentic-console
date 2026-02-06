@@ -1,16 +1,17 @@
 # Magentic Agent Orchestrator
 
-A TypeScript multi-agent system implementing the **Magentic Orchestration Pattern** with Claude, Gemini, and Ollama agents.
+A TypeScript multi-agent system implementing the **Magentic Orchestration Pattern** with Claude, Gemini, Ollama, and MLX agents.
 
 ![Web UI](UI.png)
 
 ## Features
 
-- **Multi-Agent System**: Manager, Claude, Gemini, and Ollama agents working together
+- **Multi-Agent System**: Manager, Claude, Gemini, Ollama, and MLX agents working together
 - **Automatic Planning**: Break down complex tasks into executable steps
 - **Cross-Agent Tools**: Claude can invoke Gemini for web search and summarization
-- **MCP Support**: Connect Claude to Model Context Protocol servers
+- **MCP Support**: Connect Claude, Ollama, and MLX to Model Context Protocol servers
 - **Local AI**: Run Ollama models locally for privacy and cost savings
+- **Apple Silicon Optimization**: Run MLX models with neural accelerator support on M-series chips
 - **Web UI**: Full-featured interface for configuration and execution
 - **Real-Time Updates**: Live task execution monitoring via WebSocket
 
@@ -34,7 +35,26 @@ A TypeScript multi-agent system implementing the **Magentic Orchestration Patter
    ollama serve
    ```
 
-4. **Start the Web UI:**
+4. **(Optional) Install MLX for Apple Silicon optimization:**
+   ```bash
+   # Option 1: Using Homebrew (recommended for macOS)
+   brew install mlx-lm
+
+   # Option 2: Using pip
+   pip install mlx mlx-lm
+
+   # Start MLX server (with any installation method)
+   mlx_lm.server --model mlx-community/Llama-3.2-3B-Instruct-4bit
+
+   # Or specify a different port
+   mlx_lm.server --model mlx-community/Llama-3.2-3B-Instruct-4bit --port 8080
+   ```
+
+   **Requirements:**
+   - Apple Silicon Mac (M1/M2/M3/M4/M5)
+   - macOS 14.0 or higher
+
+5. **Start the Web UI:**
    ```bash
    npm run ui
    ```
@@ -57,6 +77,13 @@ GOOGLE_API_KEY=your_gemini_api_key_here
 Configure Ollama base URL if not using default:
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
+```
+
+### MLX (Optional - Apple Silicon only)
+
+Configure MLX base URL if not using default:
+```env
+MLX_BASE_URL=http://localhost:8080
 ```
 
 **Konfiguracja modeli Ollama:**
@@ -106,6 +133,13 @@ const orchestrator = new MagenticOrchestrator({
     maxTokens: 4096,
   },
   ollamaBaseUrl: 'http://localhost:11434',
+  // Optional: Enable MLX (Apple Silicon only)
+  mlxConfig: {
+    model: 'mlx-community/Llama-3.2-3B-Instruct-4bit',
+    temperature: 0.7,
+    maxTokens: 4096,
+  },
+  mlxBaseUrl: 'http://localhost:8080',
 });
 
 await orchestrator.initialize();
@@ -117,7 +151,10 @@ const result = await orchestrator.executeTask(
 );
 
 // Or chat directly with Ollama
-const response = await orchestrator.chat('Explain async/await', 'ollama');
+const ollamaResponse = await orchestrator.chat('Explain async/await', 'ollama');
+
+// Or chat with MLX (Apple Silicon)
+const mlxResponse = await orchestrator.chat('What is TypeScript?', 'mlx');
 
 await orchestrator.cleanup();
 ```
@@ -126,15 +163,17 @@ See [examples/](examples/) for more usage examples.
 
 ## Architecture
 
-The system uses four specialized agents:
+The system uses five specialized agents:
 
 1. **Manager Agent** - Plans tasks and delegates to appropriate agents
 2. **Claude Agent** - Handles deep reasoning, code analysis, complex tasks, PDF analysis, and MCP tools (paid)
 3. **Gemini Agent** - Handles web search, summarization, and quick queries (paid)
 4. **Ollama Agent** - Local open-source models for privacy-focused, offline tasks (free)
+5. **MLX Agent** - Apple Silicon-optimized models with neural accelerator support (free, fastest on Mac M-series)
 
 The Manager Agent automatically selects the most cost-effective agent for each task:
-- **Ollama** for simple text analysis (free, local)
+- **MLX** for fast local inference on Apple Silicon (free, hardware-accelerated)
+- **Ollama** for simple text analysis on any platform (free, local)
 - **Gemini** for web search and medium complexity tasks (affordable)
 - **Claude** for complex reasoning, PDF analysis, and database operations (premium)
 
