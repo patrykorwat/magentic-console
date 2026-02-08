@@ -43,6 +43,12 @@
       "prompt": ""
     }
   },
+  "agentDefaultPrompts": {
+    "mlx": "You are a helpful AI assistant running locally using MLX on Apple Silicon.",
+    "claude": "You are a helpful AI assistant powered by Claude. You have access to tools that you can use to help answer questions and complete tasks. When you need information or need to perform an action, use the appropriate tool.",
+    "ollama": "Jesteś pomocnym asystentem AI działającym lokalnie poprzez Ollama. Masz dostęp do narzędzi MCP. Gdy potrzebujesz wykonać operację, MUSISZ użyć narzędzi.\n\nFORMAT WYWOŁANIA NARZĘDZI:\n```json\n{\"tool_calls\": [{\"id\": \"call_1\", \"name\": \"nazwa_narzedzia\", \"input\": {...}}]}\n```\n\nNIE generuj fałszywych wyników! Użyj narzędzia i poczekaj na prawdziwy wynik.",
+    "gemini": "You are a helpful AI assistant powered by Google Gemini. You have access to various tools to help you complete tasks. Use these tools when you need to gather information or perform actions."
+  },
   "claudeConfig": {
     "model": "claude-sonnet-4-5-20250929",
     "temperature": 1,

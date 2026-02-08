@@ -1352,7 +1352,10 @@ async function viewExecutionDetails(executionId) {
             <div style="max-width: 900px; margin: 0 auto;">
                 <div style="background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h2 style="margin: 0; color: #667eea;">📄 Szczegóły Wykonania</h2>
+                        <div>
+                            <h2 style="margin: 0; color: #667eea;">📄 Szczegóły Wykonania</h2>
+                            <div style="font-size: 12px; color: #999; margin-top: 5px; font-family: monospace;">ID: ${executionId}</div>
+                        </div>
                         <button class="btn btn-secondary" onclick="closeExecutionDetails()">← Powrót</button>
                     </div>
 
@@ -1441,6 +1444,14 @@ async function viewExecutionDetails(executionId) {
                     html += '</div>';
                 }
 
+                // Show agent response
+                if (stepExecution && stepExecution.response) {
+                    html += `<div style="margin-top: 10px; padding: 10px; background: #d4edda; border-radius: 5px; border-left: 3px solid #28a745;">
+                                <strong style="font-size: 12px; color: #155724;">✅ Odpowiedź:</strong>
+                                <div style="margin-top: 6px; font-size: 12px; color: #155724; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">${escapeHtml(stepExecution.response)}</div>
+                            </div>`;
+                }
+
                 // If step has error, show error message
                 if (stepExecution && stepExecution.error) {
                     html += `<div style="margin-top: 10px; padding: 10px; background: #f8d7da; border-radius: 5px; border-left: 3px solid #dc3545;">
@@ -1498,6 +1509,14 @@ async function viewExecutionDetails(executionId) {
                     });
 
                     html += '</div>';
+                }
+
+                // Show agent response
+                if (step.response) {
+                    html += `<div style="margin-top: 10px; padding: 10px; background: #d4edda; border-radius: 5px; border-left: 3px solid #28a745;">
+                                <strong style="font-size: 12px; color: #155724;">✅ Odpowiedź:</strong>
+                                <div style="margin-top: 6px; font-size: 12px; color: #155724; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">${escapeHtml(step.response)}</div>
+                            </div>`;
                 }
 
                 // If step has error, show error message

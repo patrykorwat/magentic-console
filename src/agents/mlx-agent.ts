@@ -8,9 +8,9 @@ import {
   Tool,
   ToolCall,
   ToolResult,
-  FileAttachment,
   MCPServerConfig,
 } from '../types/index.js';
+import { getMLXDefaultPrompt } from './prompts.js';
 
 export class MLXAgent implements Agent {
   name: string;
@@ -38,18 +38,8 @@ export class MLXAgent implements Agent {
     this.baseUrl = baseUrl || 'http://localhost:8080';
     this.model = config.model || 'mlx-community/Llama-3.2-3B-Instruct-4bit';
 
-    // System prompt loaded from config or default
-    const defaultPrompt =
-      'You are a helpful AI assistant running locally using MLX on Apple Silicon.' +
-      '\n\nYou have access to MCP tools. When you need to perform an operation, you MUST use the tools.' +
-      '\n\nTOOL CALLING FORMAT:' +
-      '\n```json' +
-      '\n{"tool_calls": [{"id": "call_1", "name": "tool_name", "input": {...}}]}' +
-      '\n```' +
-      '\n\nDO NOT generate fake results! Use the tool and wait for the real result.';
-
-    // Use custom prompt if provided, otherwise use systemPrompt or default
-    this.systemPrompt = config.customPrompt || config.systemPrompt || defaultPrompt;
+    // Use custom prompt if provided, otherwise use systemPrompt or default from prompts config
+    this.systemPrompt = config.customPrompt || config.systemPrompt || getMLXDefaultPrompt();
 
     this.temperature = config.temperature ?? 0.7;
     this.maxTokens = config.maxTokens || 4096;
@@ -334,10 +324,9 @@ export class MLXAgent implements Agent {
         max_tokens: this.maxTokens,
       };
 
-      // Add tools if available
-      if (mlxTools.length > 0) {
-        requestBody.tools = mlxTools;
-      }
+      // NOTE: Do NOT add tools parameter - MLX doesn't support native tool calling
+      // Tools are already described in the system prompt (line 272-284)
+      // Model will generate tool calls in text format which we parse later
 
       // Create abort controller with 5 minute timeout
       const controller = new AbortController();
